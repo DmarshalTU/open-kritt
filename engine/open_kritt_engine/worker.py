@@ -1,3 +1,4 @@
+import json
 import logging
 import random
 import shutil
@@ -27,6 +28,7 @@ from .harnesses import (
     CAPACITY_RATE_LIMIT_FAILURES,
     RETRYABLE_RATE_LIMIT_FAILURES,
     HarnessError,
+    HarnessResult,
     cleanup_stale_scan_sandboxes,
     harness_failure_retry_count,
     harness_for,
@@ -63,7 +65,7 @@ from .queue import build_pending_jobs, configured_step_ids
 from .resource_diagnostics import publish_resource_diagnostics
 from .runner_resources import evict_newest_scan_runner
 from .runtime_config import runtime_bool, runtime_config_path, runtime_float, runtime_int, runtime_value
-from .schema import OutputValidationError, output_schema, validate_payload
+from .schema import EXTRACTOR_HELPER_FIELD, OutputValidationError, output_schema, validate_payload
 from .storage_cleanup import prune_docker_build_cache, prune_stopped_scan_containers, prune_unused_docker_images
 from .workspace import (
     cleanup_job_workspace,
@@ -81,6 +83,8 @@ from .workspace import (
     scan_checkout_cache_entry_names,
     scan_checkout_cache_entry_prefixes,
     scan_checkout_cache_key,
+    local_model_source_excerpts,
+    response_quotes_excerpt,
     workspace_context,
     workspace_prompt_context,
 )
@@ -168,6 +172,85 @@ def generation_harness_failure_message(error: HarnessError, generation_id: int) 
     code = _sanitize_generation_error_text(error.code, 100) or "model_process_error"
     message = public_message or "The model process exited without returning a structured result."
     return f"{message} Diagnostic: {code} (generation {generation_id})."
+
+
+def _payload_text(payload: dict[str, Any]) -> str:
+    parts = [str(payload.get("stub_explanation") or "")]
+    for row in payload.get("results") or []:
+        if isinstance(row, dict):
+            parts.append(json.dumps(row, ensure_ascii=False))
+    return "\n".join(parts)
+
+
+def _add_token_usage(total: dict[str, int], usage: dict[str, Any] | None) -> None:
+    if not usage:
+        return
+    for key in ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens"):
+        value = usage.get(key)
+        if isinstance(value, int):
+            total[key] = total.get(key, 0) + value
+
+
+def review_checked_out_files(
+    harness,
+    base_arguments: dict[str, Any],
+    excerpts: list[tuple[str, str]],
+    task_prompt: str,
+    schema: dict[str, Any],
+    *,
+    multi_output: bool,
+) -> HarnessResult:
+    """Review each checked-out excerpt in its own model call.
+
+    A local model otherwise returns a one-line stub in a few seconds. Separate
+    calls make it quote each file before that file can be called clean.
+    """
+
+    findings = []
+    notes = []
+    usage: dict[str, int] = {}
+    session_id = None
+    for rel, body in excerpts:
+        file_prompt = (
+            f"Review only the checked-out file {rel}. The excerpt below is source read from disk.\n"
+            f"----- {rel}\n{body}\n\n"
+            f"{task_prompt.strip()}\n\n"
+            "Copy one exact line of code from this excerpt into stub_explanation before the conclusion. "
+            f"If you report a finding, file_path must be {rel}."
+        )
+        filled = harness_prompt(file_prompt, multi_output=multi_output, schema=schema)
+        result = harness.run(**{**base_arguments, "prompt": filled})
+        text = _payload_text(result.payload or {})
+        if not response_quotes_excerpt(text, body):
+            correction = (
+                f"{filled}\n\nThe previous answer did not copy a source line from {rel}. "
+                "Copy one exact line from the excerpt, then give the conclusion.\n"
+                f"Previous answer:\n{text[:800]}"
+            )
+            result = harness.run(**{**base_arguments, "prompt": correction})
+            text = _payload_text(result.payload or {})
+        _add_token_usage(usage, result.usage)
+        session_id = result.codex_session_id or session_id
+        if (result.payload or {}).get("stub"):
+            explanation = str((result.payload or {}).get("stub_explanation") or "").strip()
+            if response_quotes_excerpt(text, body):
+                notes.append(f"{rel}: {explanation}")
+            else:
+                notes.append(f"{rel}: the model did not quote the checked-out source.")
+        else:
+            for row in (result.payload or {}).get("results") or []:
+                if isinstance(row, dict):
+                    findings.append(row)
+    if findings:
+        payload = {EXTRACTOR_HELPER_FIELD: True, "stub": False, "stub_explanation": "", "results": findings}
+    else:
+        payload = {
+            EXTRACTOR_HELPER_FIELD: True,
+            "stub": True,
+            "stub_explanation": "\n".join(notes) or "No excerpted file showed a bug.",
+            "results": [],
+        }
+    return HarnessResult(payload=payload, usage=usage or None, codex_session_id=session_id)
 
 
 class Worker:
@@ -1523,6 +1606,12 @@ class Worker:
                         rendered_prompt,
                         repeat_append_prompt(state.repeat_run, prior_repeat_results),
                     ]
+                    local_excerpts = []
+                    if model_provider == "ollama":
+                        local_excerpts = local_model_source_excerpts(
+                            prepared.source_repo_dir or prepared.repo_dir,
+                            str(scan.get("repo_scope") or ""),
+                        )
                     prompt_filled = harness_prompt(
                         "\n\n".join(part for part in prompt_parts if part),
                         multi_output=step.multi_output,
@@ -1641,9 +1730,19 @@ class Worker:
                         runner_image = getattr(prepared, "runner_image", None)
                         if runner_image:
                             harness_arguments["runner_image"] = runner_image
-                        result = harness.run(
-                            **harness_arguments,
-                        )
+                        if local_excerpts:
+                            result = review_checked_out_files(
+                                harness,
+                                harness_arguments,
+                                local_excerpts,
+                                rendered_prompt,
+                                schema,
+                                multi_output=step.multi_output,
+                            )
+                        else:
+                            result = harness.run(
+                                **harness_arguments,
+                            )
                     mark_provider_account_available(
                         getattr(prepared.workspace, "provider_account_provider", None),
                         getattr(prepared.workspace, "provider_account_home", None),

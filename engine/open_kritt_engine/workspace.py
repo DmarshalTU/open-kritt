@@ -1065,8 +1065,142 @@ def workspace_layout(repo_dir: str, manifest: dict[str, Any]) -> str:
                 f"(workspace path: {dep.get('relative_path') or dep.get('alias')})"
             )
     else:
-        lines.append("No dependency checkouts are listed in WORKSPACE.json.")
+        lines.append(
+            "No extra dependency repositories are checked out. "
+            "The primary repository source is in the working directory."
+        )
     return "\n".join(lines)
+
+
+_SOURCE_EXCERPT_SKIP_DIRS = {".git", "vendor", "node_modules", "dist", "testdata"}
+_SOURCE_EXCERPT_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".cs",
+    ".go",
+    ".h",
+    ".java",
+    ".js",
+    ".php",
+    ".py",
+    ".rb",
+    ".rs",
+    ".ts",
+}
+
+
+def _scope_path_hints(repo_scope: str, root: Path) -> list[str]:
+    hints = []
+    for match in re.findall(r"[A-Za-z0-9_./-]+", repo_scope or ""):
+        token = match.strip("./")
+        if not token or ".." in token.split("/"):
+            continue
+        if (root / token).exists() and token not in hints:
+            hints.append(token)
+    return hints
+
+
+_SOURCE_EXCERPT_NAME_HINTS = ("keyring", "login", "token", "secret", "config", "crypto", "run")
+
+
+def _excerpt_priority(relative_path: str) -> tuple[int, str]:
+    lowered = relative_path.lower()
+    score = sum(1 for hint in _SOURCE_EXCERPT_NAME_HINTS if hint in lowered)
+    return (-score, relative_path)
+
+
+def _strip_leading_license(text: str) -> str:
+    package_at = text.find("\npackage ")
+    if text.startswith("/*") and 0 < package_at < 2000:
+        return text[package_at + 1 :]
+    return text
+
+
+def local_model_source_excerpts(
+    repo_dir: str,
+    repo_scope: str = "",
+    *,
+    limit: int = 4,
+    chars_per_file: int = 1600,
+) -> list[tuple[str, str]]:
+    """Return capped source for the files a local model must review one at a time."""
+
+    root = Path(repo_dir)
+    if not root.is_dir():
+        return []
+    files: list[tuple[str, Path]] = []
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in _SOURCE_EXCERPT_SUFFIXES:
+            continue
+        relative = path.relative_to(root)
+        if set(relative.parts) & _SOURCE_EXCERPT_SKIP_DIRS or path.name == "WORKSPACE.json":
+            continue
+        if path.name.endswith("_test.go"):
+            continue
+        files.append((relative.as_posix(), path))
+    if not files:
+        return []
+    hints = _scope_path_hints(repo_scope, root)
+    preferred = [
+        item
+        for item in files
+        if any(item[0] == hint or item[0].startswith(f"{hint.rstrip('/')}/") for hint in hints)
+    ]
+    chosen = sorted(preferred or files, key=lambda item: _excerpt_priority(item[0]))[:limit]
+    excerpts: list[tuple[str, str]] = []
+    for rel, path in chosen:
+        try:
+            text = _strip_leading_license(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        text = text.strip()
+        if len(text) > chars_per_file:
+            text = text[:chars_per_file].rstrip() + "\n...[truncated]"
+        if text:
+            excerpts.append((rel, text))
+    return excerpts
+
+
+def response_quotes_excerpt(text: str, excerpt: str) -> bool:
+    """True when the model copied a real source line, not only the file path."""
+
+    for line in excerpt.splitlines():
+        stripped = line.strip()
+        if len(stripped) < 20 or stripped.startswith(("-----", "//", "/*", "*", "package ", "import ")):
+            continue
+        if stripped in (text or ""):
+            return True
+    return False
+
+
+def local_model_source_context(repo_dir: str, repo_scope: str = "", *, max_chars: int = 8000) -> str:
+    """Attach a real file index and short excerpts for models that do not call tools.
+
+    The local Codex path currently accepts a first-turn JSON answer, so a small
+    model can report an empty checkout without reading the workspace. These
+    excerpts are the files the model is allowed to cite.
+    """
+
+    excerpts = local_model_source_excerpts(repo_dir, repo_scope)
+    if not excerpts:
+        return ""
+    index = "\n".join(f"- {rel}" for rel, _text in excerpts)
+    parts = [
+        "Primary repository source is checked out in the working directory. "
+        "An empty dependency list does not mean those files are missing. "
+        "Cite only paths and lines from the excerpts below.",
+        "File index:",
+        index,
+        "Source excerpts:",
+    ]
+    used = sum(len(part) + 1 for part in parts)
+    for rel, text in excerpts:
+        block = f"----- {rel}\n{text}\n"
+        if used + len(block) > max_chars:
+            break
+        parts.append(block)
+        used += len(block) + 1
+    return "\n".join(parts)
 
 
 def workspace_prompt_context(layout: str, manifest_json: str) -> str:

@@ -3540,3 +3540,41 @@ def test_post_processing_marks_rate_limited_batch_interrupted(monkeypatch):
 
     assert fake_db.updates[-1]["status"] == "interrupted"
     assert fake_db.updates[-1]["phase"] == "interrupted"
+
+
+def test_local_model_source_context_includes_scoped_checkout_files(tmp_path):
+    pkg = tmp_path / "pkg" / "configuration"
+    pkg.mkdir(parents=True)
+    (pkg / "config.go").write_text(
+        "/*\nCopyright\nLicensed under the Apache License, Version 2.0\n*/\npackage configuration\nconst mode = 0o600\n",
+        encoding="utf-8",
+    )
+    (pkg / "keyring.go").write_text("package configuration\nconst keyringMarker = 1\n", encoding="utf-8")
+    other = tmp_path / "pkg" / "controllers"
+    other.mkdir(parents=True)
+    (other / "activity.go").write_text("package controllers\n" + ("// license line\n" * 400), encoding="utf-8")
+    (tmp_path / "README.md").write_text("ignore me\n", encoding="utf-8")
+    (tmp_path / "vendor" / "lib").mkdir(parents=True)
+    (tmp_path / "vendor" / "lib" / "skip.go").write_text("package lib\n", encoding="utf-8")
+
+    context = workspace_module.local_model_source_context(
+        str(tmp_path),
+        "pkg/configuration",
+    )
+
+    assert "pkg/configuration/config.go" in context
+    assert "const mode = 0o600" in context
+    assert "Apache License" not in context
+    assert "const keyringMarker = 1" in context
+    assert "license line" not in context
+    assert "skip.go" not in context
+    assert "does not mean those files are missing" in context
+
+
+def test_response_quotes_excerpt_requires_a_source_line():
+    excerpt = "func SaveToken(token string) error {\n    return os.WriteFile(path, []byte(token), 0o600)\n}\n"
+    assert workspace_module.response_quotes_excerpt(
+        "Looked at `return os.WriteFile(path, []byte(token), 0o600)` and stopped.",
+        excerpt,
+    )
+    assert not workspace_module.response_quotes_excerpt("No security-related bugs were found.", excerpt)
