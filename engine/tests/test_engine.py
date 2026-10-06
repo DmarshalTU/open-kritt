@@ -3571,6 +3571,25 @@ def test_local_model_source_context_includes_scoped_checkout_files(tmp_path):
     assert "does not mean those files are missing" in context
 
 
+def test_local_excerpts_include_every_scoped_file(tmp_path):
+    pkg = tmp_path / "pkg" / "cmd"
+    pkg.mkdir(parents=True)
+    for name in ("a.go", "b.go", "c.go", "d.go", "e.go"):
+        (pkg / name).write_text(f"package cmd\nconst {name[0]} = 1\n", encoding="utf-8")
+
+    excerpts = workspace_module.local_model_source_excerpts(str(tmp_path), "pkg/cmd")
+    names = [rel for rel, _text in excerpts]
+
+    assert names == [
+        "pkg/cmd/a.go",
+        "pkg/cmd/b.go",
+        "pkg/cmd/c.go",
+        "pkg/cmd/d.go",
+        "pkg/cmd/e.go",
+    ]
+    assert len(workspace_module.batch_source_excerpts(excerpts, max_chars=40)) > 1
+
+
 def test_response_quotes_excerpt_requires_a_source_line():
     excerpt = "func SaveToken(token string) error {\n    return os.WriteFile(path, []byte(token), 0o600)\n}\n"
     assert workspace_module.response_quotes_excerpt(

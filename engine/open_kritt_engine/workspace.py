@@ -1120,10 +1120,10 @@ def local_model_source_excerpts(
     repo_dir: str,
     repo_scope: str = "",
     *,
-    limit: int = 4,
-    chars_per_file: int = 1600,
+    limit: int | None = None,
+    chars_per_file: int = 5000,
 ) -> list[tuple[str, str]]:
-    """Return capped source for the files a local model must review one at a time."""
+    """Return source for every file in scope, split so each piece fits a local context."""
 
     root = Path(repo_dir)
     if not root.is_dir():
@@ -1146,19 +1146,44 @@ def local_model_source_excerpts(
         for item in files
         if any(item[0] == hint or item[0].startswith(f"{hint.rstrip('/')}/") for hint in hints)
     ]
-    chosen = sorted(preferred or files, key=lambda item: _excerpt_priority(item[0]))[:limit]
+    chosen = sorted(preferred or files, key=lambda item: _excerpt_priority(item[0]))
+    if limit is not None:
+        chosen = chosen[:limit]
     excerpts: list[tuple[str, str]] = []
     for rel, path in chosen:
         try:
-            text = _strip_leading_license(path.read_text(encoding="utf-8", errors="replace"))
+            text = _strip_leading_license(path.read_text(encoding="utf-8", errors="replace")).strip()
         except OSError:
             continue
-        text = text.strip()
-        if len(text) > chars_per_file:
-            text = text[:chars_per_file].rstrip() + "\n...[truncated]"
-        if text:
-            excerpts.append((rel, text))
+        if not text:
+            continue
+        for index, start in enumerate(range(0, len(text), chars_per_file), start=1):
+            piece = text[start : start + chars_per_file]
+            label = rel if len(text) <= chars_per_file else f"{rel}#part{index}"
+            excerpts.append((label, piece))
     return excerpts
+
+
+def batch_source_excerpts(
+    excerpts: list[tuple[str, str]],
+    *,
+    max_chars: int = 5000,
+) -> list[list[tuple[str, str]]]:
+    """Group file pieces so one local model call stays inside the context budget."""
+
+    batches: list[list[tuple[str, str]]] = []
+    current: list[tuple[str, str]] = []
+    size = 0
+    for rel, text in excerpts:
+        if current and size + len(text) > max_chars:
+            batches.append(current)
+            current = []
+            size = 0
+        current.append((rel, text))
+        size += len(text)
+    if current:
+        batches.append(current)
+    return batches
 
 
 def response_quotes_excerpt(text: str, excerpt: str) -> bool:

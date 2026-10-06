@@ -1,4 +1,3 @@
-import json
 import logging
 import random
 import shutil
@@ -83,8 +82,8 @@ from .workspace import (
     scan_checkout_cache_entry_names,
     scan_checkout_cache_entry_prefixes,
     scan_checkout_cache_key,
+    batch_source_excerpts,
     local_model_source_excerpts,
-    response_quotes_excerpt,
     workspace_context,
     workspace_prompt_context,
 )
@@ -174,14 +173,6 @@ def generation_harness_failure_message(error: HarnessError, generation_id: int) 
     return f"{message} Diagnostic: {code} (generation {generation_id})."
 
 
-def _payload_text(payload: dict[str, Any]) -> str:
-    parts = [str(payload.get("stub_explanation") or "")]
-    for row in payload.get("results") or []:
-        if isinstance(row, dict):
-            parts.append(json.dumps(row, ensure_ascii=False))
-    return "\n".join(parts)
-
-
 def _add_token_usage(total: dict[str, int], usage: dict[str, Any] | None) -> None:
     if not usage:
         return
@@ -200,54 +191,51 @@ def review_checked_out_files(
     *,
     multi_output: bool,
 ) -> HarnessResult:
-    """Review each checked-out excerpt in its own model call.
+    """Review every scoped source file. A local model does not walk the tree itself."""
 
-    A local model otherwise returns a one-line stub in a few seconds. Separate
-    calls make it quote each file before that file can be called clean.
-    """
-
+    if not excerpts:
+        raise HarnessError(
+            "Local review found no source files in the checkout scope.",
+            code="configuration_error",
+        )
+    batches = batch_source_excerpts(excerpts)
     findings = []
     notes = []
     usage: dict[str, int] = {}
     session_id = None
-    for rel, body in excerpts:
+    for index, batch in enumerate(batches, start=1):
+        names = [rel for rel, _text in batch]
+        LOGGER.info("local review batch %s/%s: %s", index, len(batches), ", ".join(names))
+        body = "\n\n".join(f"----- {rel}\n{text}" for rel, text in batch)
         file_prompt = (
-            f"Review only the checked-out file {rel}. The excerpt below is source read from disk.\n"
-            f"----- {rel}\n{body}\n\n"
+            f"Review checked-out source batch {index} of {len(batches)}.\n"
+            f"Files in this batch: {', '.join(names)}.\n\n"
+            f"{body}\n\n"
             f"{task_prompt.strip()}\n\n"
-            "Copy one exact line of code from this excerpt into stub_explanation before the conclusion. "
-            f"If you report a finding, file_path must be {rel}."
+            "Use only the source in this batch. "
+            "If you report a finding, file_path must be one of the files above. "
+            "If this batch has no bug, name each file in stub_explanation."
         )
         filled = harness_prompt(file_prompt, multi_output=multi_output, schema=schema)
         result = harness.run(**{**base_arguments, "prompt": filled})
-        text = _payload_text(result.payload or {})
-        if not response_quotes_excerpt(text, body):
-            correction = (
-                f"{filled}\n\nThe previous answer did not copy a source line from {rel}. "
-                "Copy one exact line from the excerpt, then give the conclusion.\n"
-                f"Previous answer:\n{text[:800]}"
-            )
-            result = harness.run(**{**base_arguments, "prompt": correction})
-            text = _payload_text(result.payload or {})
         _add_token_usage(usage, result.usage)
         session_id = result.codex_session_id or session_id
-        if (result.payload or {}).get("stub"):
-            explanation = str((result.payload or {}).get("stub_explanation") or "").strip()
-            if response_quotes_excerpt(text, body):
-                notes.append(f"{rel}: {explanation}")
-            else:
-                notes.append(f"{rel}: the model did not quote the checked-out source.")
+        payload = result.payload or {}
+        if payload.get("stub"):
+            explanation = str(payload.get("stub_explanation") or "").strip()
+            notes.append(f"{', '.join(names)}: {explanation or 'no finding'}")
         else:
-            for row in (result.payload or {}).get("results") or []:
+            for row in payload.get("results") or []:
                 if isinstance(row, dict):
                     findings.append(row)
+    coverage = f"Reviewed {len(excerpts)} source files in {len(batches)} batches."
     if findings:
         payload = {EXTRACTOR_HELPER_FIELD: True, "stub": False, "stub_explanation": "", "results": findings}
     else:
         payload = {
             EXTRACTOR_HELPER_FIELD: True,
             "stub": True,
-            "stub_explanation": "\n".join(notes) or "No excerpted file showed a bug.",
+            "stub_explanation": coverage + ("\n" + "\n".join(notes) if notes else ""),
             "results": [],
         }
     return HarnessResult(payload=payload, usage=usage or None, codex_session_id=session_id)
