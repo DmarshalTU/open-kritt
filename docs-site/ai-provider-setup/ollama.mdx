@@ -31,5 +31,22 @@ search is disabled for this provider. A 7B model will not match a hosted frontie
 model, and a large workflow prompt can exceed the context that fits in 12 GB.
 Keep the number of model jobs small.
 
-The default context advertised to Codex is 32,768 tokens. The Ollama process
-may use a smaller context unless `OLLAMA_CONTEXT_LENGTH` is raised.
+## Context window
+
+Ollama defaults to a 4,096-token context and silently drops the start of longer
+prompts. Set `OLLAMA_CONTEXT_LENGTH` on the Ollama server (for example `32768`)
+and restart it, then set `OLLAMA_CONTEXT_WINDOW` in `.env` to the same value so
+Codex plans for the real limit. `GET http://127.0.0.1:11434/api/ps` shows the
+`context_length` of a loaded model.
+
+## How a local scan reads the code
+
+A small model does not walk the repository with tools. For the first workflow
+step, the engine reads the scoped source files itself, numbers every line, and
+sends them in batches of `LOCAL_REVIEW_BATCH_CHARS` characters. Findings cite the
+real file path and line. A batch with invalid output is retried once and then
+skipped. `LOCAL_REVIEW_MAX_FILES` caps the number of files, reviewing
+security-relevant names first. Later workflow steps use one normal call.
+
+Dedupe and ranking send `OLLAMA_POST_BATCH_SIZE` findings per call (default 8),
+because small models drop or invent ids in long lists.

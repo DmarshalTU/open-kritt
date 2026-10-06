@@ -3529,7 +3529,7 @@ def test_post_processing_marks_rate_limited_batch_interrupted(monkeypatch):
 
     fake_db = FakePostDb()
     processor = PostProcessor(SimpleNamespace(data_dir="/tmp", github_token=None), fake_db)
-    monkeypatch.setattr(post_processing_module, "dedupe_batch", lambda _rows: ([], [{"id": 11}]))
+    monkeypatch.setattr(post_processing_module, "dedupe_batch", lambda _rows, *_args: ([], [{"id": 11}]))
     monkeypatch.setattr(post_processing_module, "build_dedupe_prompt", lambda *_args: "dedupe")
     processor._run_harness_with_retries = lambda **_kwargs: (_ for _ in ()).throw(
         PostProcessRateLimited("provider rate limit", retry_after_seconds=25.0)
@@ -3542,33 +3542,43 @@ def test_post_processing_marks_rate_limited_batch_interrupted(monkeypatch):
     assert fake_db.updates[-1]["phase"] == "interrupted"
 
 
-def test_local_model_source_context_includes_scoped_checkout_files(tmp_path):
+def test_local_excerpts_number_lines_and_keep_real_paths(tmp_path):
     pkg = tmp_path / "pkg" / "configuration"
     pkg.mkdir(parents=True)
     (pkg / "config.go").write_text(
         "/*\nCopyright\nLicensed under the Apache License, Version 2.0\n*/\npackage configuration\nconst mode = 0o600\n",
         encoding="utf-8",
     )
-    (pkg / "keyring.go").write_text("package configuration\nconst keyringMarker = 1\n", encoding="utf-8")
-    other = tmp_path / "pkg" / "controllers"
-    other.mkdir(parents=True)
-    (other / "activity.go").write_text("package controllers\n" + ("// license line\n" * 400), encoding="utf-8")
+    (pkg / "config_test.go").write_text("package configuration\n", encoding="utf-8")
     (tmp_path / "README.md").write_text("ignore me\n", encoding="utf-8")
     (tmp_path / "vendor" / "lib").mkdir(parents=True)
     (tmp_path / "vendor" / "lib" / "skip.go").write_text("package lib\n", encoding="utf-8")
+    (tmp_path / "contracts").mkdir()
+    (tmp_path / "contracts" / "Vault.sol").write_text("contract Vault {}\n", encoding="utf-8")
 
-    context = workspace_module.local_model_source_context(
-        str(tmp_path),
-        "pkg/configuration",
-    )
+    excerpts = dict(workspace_module.local_model_source_excerpts(str(tmp_path)))
 
-    assert "pkg/configuration/config.go" in context
-    assert "const mode = 0o600" in context
-    assert "Apache License" not in context
-    assert "const keyringMarker = 1" in context
-    assert "license line" not in context
-    assert "skip.go" not in context
-    assert "does not mean those files are missing" in context
+    assert set(excerpts) == {"pkg/configuration/config.go", "contracts/Vault.sol"}
+    config = excerpts["pkg/configuration/config.go"]
+    assert "Apache License" not in config
+    assert "    5| package configuration" in config
+    assert "    6| const mode = 0o600" in config
+
+
+def test_local_excerpts_split_long_files_on_line_boundaries(tmp_path):
+    pkg = tmp_path / "pkg" / "cmd"
+    pkg.mkdir(parents=True)
+    (pkg / "run.go").write_text("".join(f"line {n}\n" for n in range(1, 201)), encoding="utf-8")
+
+    excerpts = workspace_module.local_model_source_excerpts(str(tmp_path), "pkg/cmd", chars_per_file=500)
+
+    assert len(excerpts) > 1
+    assert {rel for rel, _text in excerpts} == {"pkg/cmd/run.go"}
+    assert "#part" not in "".join(text for _rel, text in excerpts)
+    second = excerpts[1][1]
+    first_number = int(second.splitlines()[1].split("|")[0])
+    assert f"{first_number:>5}| line {first_number}" in second
+    assert "(lines " in second.splitlines()[0]
 
 
 def test_local_excerpts_include_every_scoped_file(tmp_path):
@@ -3578,9 +3588,8 @@ def test_local_excerpts_include_every_scoped_file(tmp_path):
         (pkg / name).write_text(f"package cmd\nconst {name[0]} = 1\n", encoding="utf-8")
 
     excerpts = workspace_module.local_model_source_excerpts(str(tmp_path), "pkg/cmd")
-    names = [rel for rel, _text in excerpts]
 
-    assert names == [
+    assert [rel for rel, _text in excerpts] == [
         "pkg/cmd/a.go",
         "pkg/cmd/b.go",
         "pkg/cmd/c.go",
@@ -3590,10 +3599,148 @@ def test_local_excerpts_include_every_scoped_file(tmp_path):
     assert len(workspace_module.batch_source_excerpts(excerpts, max_chars=40)) > 1
 
 
-def test_response_quotes_excerpt_requires_a_source_line():
-    excerpt = "func SaveToken(token string) error {\n    return os.WriteFile(path, []byte(token), 0o600)\n}\n"
-    assert workspace_module.response_quotes_excerpt(
-        "Looked at `return os.WriteFile(path, []byte(token), 0o600)` and stopped.",
-        excerpt,
+class _ScriptedLocalHarness:
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.prompts = []
+
+    def run(self, **kwargs):
+        self.prompts.append(kwargs["prompt"])
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return worker_module.HarnessResult(payload=answer, usage={"input_tokens": 1}, codex_session_id="s")
+
+
+def _local_finding(path):
+    return {"title": "bug", "file_path": path}
+
+
+def test_local_review_skips_a_bad_batch_and_keeps_the_others(monkeypatch):
+    def fake_validate(payload, _schema, _multi):
+        if payload.get("bad"):
+            raise OutputValidationError("results: invalid")
+        return payload.get("results") or []
+
+    monkeypatch.setattr(worker_module, "validate_payload", fake_validate)
+    harness = _ScriptedLocalHarness(
+        [
+            {"stub": False, "results": [_local_finding("a.go")]},
+            {"bad": True},
+            {"bad": True},
+            {"stub": False, "results": [_local_finding("c.go#part2")]},
+        ]
     )
-    assert not workspace_module.response_quotes_excerpt("No security-related bugs were found.", excerpt)
+    excerpts = [("a.go", "----- a.go\n" + "x" * 30), ("b.go", "----- b.go\n" + "y" * 30), ("c.go", "----- c.go\n" + "z" * 30)]
+    monkeypatch.setattr(
+        worker_module, "batch_source_excerpts", lambda items: [[item] for item in items]
+    )
+
+    result = worker_module.review_checked_out_files(harness, {}, excerpts, "task", {}, multi_output=True)
+
+    assert [row["file_path"] for row in result.payload["results"]] == ["a.go", "c.go"]
+    assert len(harness.prompts) == 4
+    assert "previous answer was rejected" in harness.prompts[2]
+
+
+def test_local_review_stops_when_the_scan_stops(monkeypatch):
+    monkeypatch.setattr(worker_module, "validate_payload", lambda payload, *_args: payload.get("results") or [])
+    monkeypatch.setattr(worker_module, "batch_source_excerpts", lambda items: [[item] for item in items])
+    harness = _ScriptedLocalHarness([{"stub": True, "stub_explanation": "clean", "results": []}])
+    calls = iter([False, True])
+
+    with pytest.raises(worker_module.HarnessError):
+        worker_module.review_checked_out_files(
+            harness,
+            {},
+            [("a.go", "----- a.go\nx"), ("b.go", "----- b.go\ny")],
+            "task",
+            {},
+            multi_output=True,
+            should_stop=lambda: next(calls),
+        )
+    assert len(harness.prompts) == 1
+
+
+def test_ollama_post_processing_uses_small_batches(monkeypatch):
+    monkeypatch.delenv("OLLAMA_POST_BATCH_SIZE", raising=False)
+    assert post_processing_module.post_batch_size("ollama") == post_processing_module.OLLAMA_BATCH_SIZE
+    assert post_processing_module.post_batch_size("openrouter") == post_processing_module.BATCH_SIZE
+    monkeypatch.setenv("OLLAMA_POST_BATCH_SIZE", "4")
+    assert post_processing_module.post_batch_size("ollama") == 4
+
+
+def test_ollama_catalog_context_window_follows_env(monkeypatch):
+    monkeypatch.setenv("OLLAMA_CONTEXT_WINDOW", "16384")
+    entry = harnesses.ollama_codex_catalog("qwen2.5-coder:7b")["models"][0]
+    assert entry["context_window"] == 16384
+    assert entry["max_context_window"] == 16384
+
+
+def _rank_item(row_id, rank, low=100, high=200):
+    return {
+        "id": row_id,
+        "rank": rank,
+        "impact_level": "low",
+        "minimum_reward": low,
+        "maximum_reward": high,
+        "reasoning": "r",
+        "root_bug": "b",
+    }
+
+
+def test_local_ranker_drops_anchor_ids_and_leaves_missing_targets_unranked():
+    payload = {
+        EXTRACTOR_HELPER_FIELD: True,
+        "rankings": [_rank_item(8, 1), _rank_item(20, 2, low=500, high=100), _rank_item(20, 3)],
+        "summary": "",
+        "missing_from_prompt": "",
+    }
+    targets = [{"id": 20}, {"id": 21}]
+    with pytest.raises(OutputValidationError):
+        post_processing_module.validate_ranker_payload(payload, targets=targets)
+
+    rows = post_processing_module.validate_ranker_payload(payload, targets=targets, partial=True)
+    assert [row["id"] for row in rows] == [20]
+    assert (rows[0]["minimum_reward"], rows[0]["maximum_reward"]) == (100, 500)
+
+    updates = post_processing_module.rank_updates_from_payload(
+        payload,
+        anchors=[{"id": 8, "bounty_rank": 1}],
+        targets=targets,
+        rank_run_id=1,
+        model="m",
+        prompt_filled="p",
+        partial=True,
+    )
+    assert sorted(update["id"] for update in updates) == [8, 20]
+
+
+def test_local_ranker_still_fails_when_nothing_is_ranked():
+    payload = {EXTRACTOR_HELPER_FIELD: True, "rankings": [_rank_item(8, 1)], "summary": "", "missing_from_prompt": ""}
+    with pytest.raises(OutputValidationError):
+        post_processing_module.validate_ranker_payload(payload, targets=[{"id": 20}], partial=True)
+
+
+def test_local_dedupe_keeps_valid_clusters_and_skips_the_rest():
+    payload = {
+        EXTRACTOR_HELPER_FIELD: True,
+        "clusters": [
+            {"ids": [1, 20, 99], "reason": "same"},
+            {"ids": [20, 21], "reason": "repeat"},
+            {"ids": [1, 2, 22], "reason": "two anchors"},
+        ],
+    }
+    anchors = [{"id": 1}, {"id": 2}]
+    targets = [{"id": 20}, {"id": 21}, {"id": 22}, {"id": 23}]
+    with pytest.raises(OutputValidationError):
+        post_processing_module.validate_dedupe_payload(payload, anchors=anchors, targets=targets)
+
+    clusters = post_processing_module.validate_dedupe_payload(payload, anchors=anchors, targets=targets, partial=True)
+    assert [cluster["ids"] for cluster in clusters] == [[1, 20], [21], [2, 22]]
+    mapping = post_processing_module.dedupe_mapping_from_clusters(
+        clusters, scan_id=5, anchors=anchors, targets=targets
+    )
+    assert set(mapping) == {20, 21, 22}
+    assert mapping[20][0] == 1
+    assert mapping[22][0] == 2

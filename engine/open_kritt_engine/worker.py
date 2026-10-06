@@ -182,6 +182,20 @@ def _add_token_usage(total: dict[str, int], usage: dict[str, Any] | None) -> Non
             total[key] = total.get(key, 0) + value
 
 
+LOCAL_REVIEW_TOLERATED_CODES = frozenset({"invalid_output", "model_process_error"})
+
+
+def _strip_piece_suffix(row: dict[str, Any], allowed_paths: set[str]) -> dict[str, Any]:
+    """Drop a ``#partN`` suffix a model may still copy from older prompts."""
+
+    path = row.get("file_path")
+    if isinstance(path, str) and "#part" in path:
+        base = path.split("#part", 1)[0]
+        if base in allowed_paths:
+            return {**row, "file_path": base}
+    return row
+
+
 def review_checked_out_files(
     harness,
     base_arguments: dict[str, Any],
@@ -190,8 +204,13 @@ def review_checked_out_files(
     schema: dict[str, Any],
     *,
     multi_output: bool,
+    should_stop=None,
 ) -> HarnessResult:
-    """Review every scoped source file. A local model does not walk the tree itself."""
+    """Review every scoped source file in batches. A local model does not walk the tree itself.
+
+    Each batch is validated on its own. A batch whose output is invalid is retried
+    once and then skipped, so one bad answer does not discard the other batches.
+    """
 
     if not excerpts:
         raise HarnessError(
@@ -199,36 +218,78 @@ def review_checked_out_files(
             code="configuration_error",
         )
     batches = batch_source_excerpts(excerpts)
-    findings = []
-    notes = []
+    findings: list[dict[str, Any]] = []
+    notes: list[str] = []
+    failed: list[str] = []
     usage: dict[str, int] = {}
     session_id = None
+    last_error: Exception | None = None
     for index, batch in enumerate(batches, start=1):
-        names = [rel for rel, _text in batch]
+        if should_stop is not None and should_stop():
+            raise HarnessError(
+                f"Scan stopped during local review (batch {index} of {len(batches)}).",
+                code="model_process_error",
+                retryable=False,
+            )
+        names = list(dict.fromkeys(rel for rel, _text in batch))
         LOGGER.info("local review batch %s/%s: %s", index, len(batches), ", ".join(names))
-        body = "\n\n".join(f"----- {rel}\n{text}" for rel, text in batch)
+        body = "\n\n".join(text for _rel, text in batch)
         file_prompt = (
             f"Review checked-out source batch {index} of {len(batches)}.\n"
-            f"Files in this batch: {', '.join(names)}.\n\n"
+            f"Files in this batch: {', '.join(names)}.\n"
+            "Each source line starts with its line number in the file, then '|'.\n\n"
             f"{body}\n\n"
             f"{task_prompt.strip()}\n\n"
             "Use only the source in this batch. "
-            "If you report a finding, file_path must be one of the files above. "
-            "If this batch has no bug, name each file in stub_explanation."
+            "If you report a finding, file_path must be exactly one of the files listed above "
+            "and line numbers must be the numbers shown before '|'. "
+            "If this batch has no bug, set stub to true and name each file in stub_explanation."
         )
         filled = harness_prompt(file_prompt, multi_output=multi_output, schema=schema)
-        result = harness.run(**{**base_arguments, "prompt": filled})
-        _add_token_usage(usage, result.usage)
-        session_id = result.codex_session_id or session_id
-        payload = result.payload or {}
+        payload = None
+        for attempt in (1, 2):
+            prompt = filled
+            if attempt == 2 and last_error is not None:
+                prompt = f"{filled}\n\nYour previous answer was rejected: {last_error}. Return valid JSON only."
+            try:
+                result = harness.run(**{**base_arguments, "prompt": prompt})
+            except HarnessError as exc:
+                if exc.code not in LOCAL_REVIEW_TOLERATED_CODES:
+                    raise
+                last_error = exc
+                continue
+            _add_token_usage(usage, result.usage)
+            session_id = result.codex_session_id or session_id
+            try:
+                validate_payload(result.payload or {}, schema, True)
+            except OutputValidationError as exc:
+                last_error = exc
+                continue
+            payload = result.payload
+            break
+        if payload is None:
+            LOGGER.warning("local review batch %s/%s skipped: %s", index, len(batches), last_error)
+            failed.append(f"batch {index} ({', '.join(names)}): {last_error}")
+            continue
         if payload.get("stub"):
             explanation = str(payload.get("stub_explanation") or "").strip()
             notes.append(f"{', '.join(names)}: {explanation or 'no finding'}")
         else:
+            allowed = set(names)
             for row in payload.get("results") or []:
                 if isinstance(row, dict):
-                    findings.append(row)
-    coverage = f"Reviewed {len(excerpts)} source files in {len(batches)} batches."
+                    findings.append(_strip_piece_suffix(row, allowed))
+    if len(failed) == len(batches):
+        raise HarnessError(
+            f"Every local review batch failed. Last error: {last_error}",
+            code="invalid_output",
+        )
+    if findings and not multi_output and len(findings) > 1:
+        LOGGER.info("single-output step: keeping the first of %s local findings", len(findings))
+        findings = findings[:1]
+    coverage = f"Reviewed {len(excerpts)} source pieces in {len(batches)} batches."
+    if failed:
+        coverage += f" {len(failed)} batches were skipped after invalid output: " + "; ".join(failed)
     if findings:
         payload = {EXTRACTOR_HELPER_FIELD: True, "stub": False, "stub_explanation": "", "results": findings}
     else:
@@ -1595,16 +1656,32 @@ class Worker:
                         repeat_append_prompt(state.repeat_run, prior_repeat_results),
                     ]
                     local_excerpts = []
-                    if model_provider == "ollama":
+                    local_task_prompt = ""
+                    # Only the first workflow step reviews the whole checkout. Later
+                    # steps act on one prior result and use the normal single call.
+                    if model_provider == "ollama" and state.source_step_id is None:
                         local_excerpts = local_model_source_excerpts(
                             prepared.source_repo_dir or prepared.repo_dir,
                             str(scan.get("repo_scope") or ""),
                         )
-                    prompt_filled = harness_prompt(
-                        "\n\n".join(part for part in prompt_parts if part),
-                        multi_output=step.multi_output,
-                        schema=schema,
-                    )
+                    if local_excerpts:
+                        # Keep agent skills and the repeat-run prompt; the batch
+                        # source replaces the workspace layout context.
+                        local_task_prompt = "\n\n".join(
+                            part for index, part in enumerate(prompt_parts) if index != 1 and part
+                        )
+                        prompt_filled = (
+                            f"[local review: {len(local_excerpts)} source pieces in "
+                            f"{len(batch_source_excerpts(local_excerpts))} batches; "
+                            "each batch call prepends its line-numbered source to the prompt below]\n\n"
+                            + harness_prompt(local_task_prompt, multi_output=step.multi_output, schema=schema)
+                        )
+                    else:
+                        prompt_filled = harness_prompt(
+                            "\n\n".join(part for part in prompt_parts if part),
+                            multi_output=step.multi_output,
+                            schema=schema,
+                        )
                     with self.db.connect() as conn:
                         current_scan = self.db.load_scan(conn, int(scan["id"]))
                         if not current_scan or current_scan["status"] in NON_RUNNABLE_SCAN_STATUSES:
@@ -1719,13 +1796,21 @@ class Worker:
                         if runner_image:
                             harness_arguments["runner_image"] = runner_image
                         if local_excerpts:
+                            scan_id_for_stop = int(scan["id"])
+
+                            def _scan_stopped() -> bool:
+                                with self.db.connect() as conn:
+                                    current = self.db.load_scan(conn, scan_id_for_stop)
+                                return not current or current["status"] in NON_RUNNABLE_SCAN_STATUSES
+
                             result = review_checked_out_files(
                                 harness,
                                 harness_arguments,
                                 local_excerpts,
-                                rendered_prompt,
+                                local_task_prompt,
                                 schema,
                                 multi_output=step.multi_output,
+                                should_stop=_scan_stopped,
                             )
                         else:
                             result = harness.run(

@@ -1072,21 +1072,35 @@ def workspace_layout(repo_dir: str, manifest: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-_SOURCE_EXCERPT_SKIP_DIRS = {".git", "vendor", "node_modules", "dist", "testdata"}
+_SOURCE_EXCERPT_SKIP_DIRS = {".git", "vendor", "node_modules", "dist", "build", "testdata", "__pycache__", ".venv"}
 _SOURCE_EXCERPT_SUFFIXES = {
     ".c",
+    ".cairo",
     ".cc",
+    ".cjs",
+    ".cpp",
     ".cs",
     ".go",
     ".h",
+    ".hpp",
     ".java",
     ".js",
+    ".jsx",
+    ".kt",
+    ".mjs",
+    ".move",
     ".php",
     ".py",
     ".rb",
     ".rs",
+    ".scala",
+    ".sol",
+    ".swift",
     ".ts",
+    ".tsx",
+    ".vy",
 }
+_SOURCE_EXCERPT_TEST_SUFFIXES = ("_test.go", ".test.js", ".test.ts", ".spec.js", ".spec.ts", ".t.sol")
 
 
 def _scope_path_hints(repo_scope: str, root: Path) -> list[str]:
@@ -1100,7 +1114,28 @@ def _scope_path_hints(repo_scope: str, root: Path) -> list[str]:
     return hints
 
 
-_SOURCE_EXCERPT_NAME_HINTS = ("keyring", "login", "token", "secret", "config", "crypto", "run")
+# Generic security-relevant names reviewed first, so a capped or stopped run
+# still covers the riskiest files.
+_SOURCE_EXCERPT_NAME_HINTS = (
+    "auth",
+    "login",
+    "session",
+    "token",
+    "secret",
+    "password",
+    "crypto",
+    "key",
+    "admin",
+    "permission",
+    "handler",
+    "controller",
+    "route",
+    "api",
+    "upload",
+    "exec",
+    "sql",
+    "config",
+)
 
 
 def _excerpt_priority(relative_path: str) -> tuple[int, str]:
@@ -1109,11 +1144,51 @@ def _excerpt_priority(relative_path: str) -> tuple[int, str]:
     return (-score, relative_path)
 
 
-def _strip_leading_license(text: str) -> str:
-    package_at = text.find("\npackage ")
-    if text.startswith("/*") and 0 < package_at < 2000:
-        return text[package_at + 1 :]
-    return text
+def _leading_license_lines(lines: list[str]) -> int:
+    """Number of lines in a leading /* ... */ license block before ``package``."""
+
+    if not lines or not lines[0].lstrip().startswith("/*"):
+        return 0
+    for index, line in enumerate(lines[:60]):
+        if line.startswith("package "):
+            return index
+    return 0
+
+
+def _local_review_int(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _numbered_pieces(rel: str, lines: list[str], first_line: int, max_chars: int) -> list[tuple[str, str]]:
+    """Split one file on line boundaries. Every line keeps its real line number."""
+
+    pieces: list[tuple[str, str]] = []
+    current: list[str] = []
+    size = 0
+    start = first_line
+    total = first_line + len(lines) - 1
+    for offset, line in enumerate(lines):
+        number = first_line + offset
+        if len(line) > max_chars:
+            line = line[:max_chars] + " ...[line truncated]"
+        numbered = f"{number:>5}| {line}"
+        if current and size + len(numbered) + 1 > max_chars:
+            pieces.append((rel, start, number - 1, current))
+            current, size, start = [], 0, number
+        current.append(numbered)
+        size += len(numbered) + 1
+    if current:
+        pieces.append((rel, start, total, current))
+    split = len(pieces) > 1
+    out = []
+    for rel_path, low, high, body in pieces:
+        header = f"----- {rel_path} (lines {low}-{high})" if split else f"----- {rel_path}"
+        out.append((rel_path, header + "\n" + "\n".join(body)))
+    return out
 
 
 def local_model_source_excerpts(
@@ -1121,23 +1196,33 @@ def local_model_source_excerpts(
     repo_scope: str = "",
     *,
     limit: int | None = None,
-    chars_per_file: int = 5000,
+    chars_per_file: int | None = None,
 ) -> list[tuple[str, str]]:
-    """Return source for every file in scope, split so each piece fits a local context."""
+    """Return line-numbered source for every file in scope, split on line boundaries.
+
+    Each item is ``(real relative path, text)``. The text starts with a
+    ``----- path`` header and every line is prefixed with its real line number,
+    so findings can cite the file and line directly. ``LOCAL_REVIEW_MAX_FILES``
+    caps how many files are read (most security-relevant names first).
+    """
 
     root = Path(repo_dir)
     if not root.is_dir():
         return []
+    if chars_per_file is None:
+        chars_per_file = _local_review_int("LOCAL_REVIEW_PIECE_CHARS", 6000)
+    if limit is None and os.environ.get("LOCAL_REVIEW_MAX_FILES"):
+        limit = _local_review_int("LOCAL_REVIEW_MAX_FILES", 0) or None
     files: list[tuple[str, Path]] = []
-    for path in root.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in _SOURCE_EXCERPT_SUFFIXES:
-            continue
-        relative = path.relative_to(root)
-        if set(relative.parts) & _SOURCE_EXCERPT_SKIP_DIRS or path.name == "WORKSPACE.json":
-            continue
-        if path.name.endswith("_test.go"):
-            continue
-        files.append((relative.as_posix(), path))
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(name for name in dirnames if name not in _SOURCE_EXCERPT_SKIP_DIRS)
+        for filename in sorted(filenames):
+            path = Path(dirpath) / filename
+            if path.suffix.lower() not in _SOURCE_EXCERPT_SUFFIXES or filename == "WORKSPACE.json":
+                continue
+            if filename.endswith(_SOURCE_EXCERPT_TEST_SUFFIXES) or not path.is_file():
+                continue
+            files.append((path.relative_to(root).as_posix(), path))
     if not files:
         return []
     hints = _scope_path_hints(repo_scope, root)
@@ -1147,30 +1232,40 @@ def local_model_source_excerpts(
         if any(item[0] == hint or item[0].startswith(f"{hint.rstrip('/')}/") for hint in hints)
     ]
     chosen = sorted(preferred or files, key=lambda item: _excerpt_priority(item[0]))
-    if limit is not None:
+    if limit is not None and len(chosen) > limit:
+        logging.getLogger("open_kritt_engine").info(
+            "local review: reviewing %s of %s scoped files (LOCAL_REVIEW_MAX_FILES)", limit, len(chosen)
+        )
         chosen = chosen[:limit]
     excerpts: list[tuple[str, str]] = []
     for rel, path in chosen:
         try:
-            text = _strip_leading_license(path.read_text(encoding="utf-8", errors="replace")).strip()
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             continue
-        if not text:
+        skip = _leading_license_lines(lines)
+        lines = lines[skip:]
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if not any(line.strip() for line in lines):
             continue
-        for index, start in enumerate(range(0, len(text), chars_per_file), start=1):
-            piece = text[start : start + chars_per_file]
-            label = rel if len(text) <= chars_per_file else f"{rel}#part{index}"
-            excerpts.append((label, piece))
+        excerpts.extend(_numbered_pieces(rel, lines, skip + 1, chars_per_file))
     return excerpts
 
 
 def batch_source_excerpts(
     excerpts: list[tuple[str, str]],
     *,
-    max_chars: int = 5000,
+    max_chars: int | None = None,
 ) -> list[list[tuple[str, str]]]:
-    """Group file pieces so one local model call stays inside the context budget."""
+    """Group file pieces so one local model call stays inside the context budget.
 
+    ``LOCAL_REVIEW_BATCH_CHARS`` sets the budget; keep it well under the
+    Ollama context window (about 3 characters per token for code).
+    """
+
+    if max_chars is None:
+        max_chars = _local_review_int("LOCAL_REVIEW_BATCH_CHARS", 12000)
     batches: list[list[tuple[str, str]]] = []
     current: list[tuple[str, str]] = []
     size = 0
@@ -1184,48 +1279,6 @@ def batch_source_excerpts(
     if current:
         batches.append(current)
     return batches
-
-
-def response_quotes_excerpt(text: str, excerpt: str) -> bool:
-    """True when the model copied a real source line, not only the file path."""
-
-    for line in excerpt.splitlines():
-        stripped = line.strip()
-        if len(stripped) < 20 or stripped.startswith(("-----", "//", "/*", "*", "package ", "import ")):
-            continue
-        if stripped in (text or ""):
-            return True
-    return False
-
-
-def local_model_source_context(repo_dir: str, repo_scope: str = "", *, max_chars: int = 8000) -> str:
-    """Attach a real file index and short excerpts for models that do not call tools.
-
-    The local Codex path currently accepts a first-turn JSON answer, so a small
-    model can report an empty checkout without reading the workspace. These
-    excerpts are the files the model is allowed to cite.
-    """
-
-    excerpts = local_model_source_excerpts(repo_dir, repo_scope)
-    if not excerpts:
-        return ""
-    index = "\n".join(f"- {rel}" for rel, _text in excerpts)
-    parts = [
-        "Primary repository source is checked out in the working directory. "
-        "An empty dependency list does not mean those files are missing. "
-        "Cite only paths and lines from the excerpts below.",
-        "File index:",
-        index,
-        "Source excerpts:",
-    ]
-    used = sum(len(part) + 1 for part in parts)
-    for rel, text in excerpts:
-        block = f"----- {rel}\n{text}\n"
-        if used + len(block) > max_chars:
-            break
-        parts.append(block)
-        used += len(block) + 1
-    return "\n".join(parts)
 
 
 def workspace_prompt_context(layout: str, manifest_json: str) -> str:

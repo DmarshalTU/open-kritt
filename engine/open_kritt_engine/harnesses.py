@@ -1142,10 +1142,22 @@ def ollama_codex_base_url(env: dict[str, str] | None = None) -> str:
     return raw.rstrip("/")
 
 
+def ollama_context_window(env: dict[str, str] | None = None) -> int:
+    """Context Codex may plan for. Must not exceed OLLAMA_CONTEXT_LENGTH on the Ollama server."""
+
+    source = env if env is not None else os.environ
+    try:
+        value = int(str(source.get("OLLAMA_CONTEXT_WINDOW") or "").strip() or 32768)
+    except ValueError:
+        return 32768
+    return max(2048, value)
+
+
 def ollama_codex_catalog(model: str) -> dict[str, Any]:
     """One Codex catalog entry for the model selected on this job."""
 
     slug = str(model or "").strip() or "qwen2.5-coder:7b"
+    context_window = ollama_context_window()
     return {
         "models": [
             {
@@ -1159,7 +1171,7 @@ def ollama_codex_catalog(model: str) -> dict[str, Any]:
                 ),
                 "default_reasoning_level": None,
                 "supported_reasoning_levels": [],
-                "context_window": 32768,
+                "context_window": context_window,
                 "support_verbosity": False,
                 "default_verbosity": "low",
                 "apply_patch_tool_type": "freeform",
@@ -1168,13 +1180,13 @@ def ollama_codex_catalog(model: str) -> dict[str, Any]:
                 "supports_parallel_tool_calls": True,
                 "input_modalities": ["text"],
                 "supports_image_detail_original": False,
-                "truncation_policy": {"mode": "tokens", "limit": 10000},
+                "truncation_policy": {"mode": "tokens", "limit": min(10000, context_window // 3)},
                 "tool_mode": None,
                 "multi_agent_version": "v2",
                 "use_responses_lite": False,
                 "include_skills_usage_instructions": False,
                 "auto_review_model_override": None,
-                "max_context_window": 32768,
+                "max_context_window": context_window,
                 "effective_context_window_percent": 90,
                 "auto_compact_token_limit": None,
                 "comp_hash": "3000",

@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -41,6 +42,25 @@ from .workspace import (
 )
 
 BATCH_SIZE = 50
+# Small local models drop or invent ids when one call must return a long id
+# list, so Ollama post-processing works through fewer findings per call.
+OLLAMA_BATCH_SIZE = 8
+
+
+def is_local_provider(model_provider: str | None) -> bool:
+    return str(model_provider or "").strip().lower() == "ollama"
+
+
+def post_batch_size(model_provider: str | None) -> int:
+    """Findings per dedupe/ranker call. ``OLLAMA_POST_BATCH_SIZE`` overrides the Ollama default."""
+
+    if str(model_provider or "").strip().lower() != "ollama":
+        return BATCH_SIZE
+    try:
+        value = int(os.environ.get("OLLAMA_POST_BATCH_SIZE", "") or OLLAMA_BATCH_SIZE)
+    except ValueError:
+        return OLLAMA_BATCH_SIZE
+    return max(1, min(value, BATCH_SIZE))
 POST_WORKSPACE_ID_OFFSET = 1_000_000_000
 IMPACT_LEVELS = {"critical", "high", "medium", "low", "informational"}
 
@@ -271,8 +291,18 @@ def build_ranker_prompt(scan: dict[str, Any], anchors: list[dict[str, Any]], tar
 
 
 def validate_dedupe_payload(
-    payload: dict[str, Any], *, anchors: list[dict[str, Any]], targets: list[dict[str, Any]]
+    payload: dict[str, Any],
+    *,
+    anchors: list[dict[str, Any]],
+    targets: list[dict[str, Any]],
+    partial: bool = False,
 ) -> list[dict[str, Any]]:
+    """Validate dedupe clusters.
+
+    With ``partial`` (local models), ids outside this batch and repeated ids are
+    dropped instead of failing, and targets the model left out stay undeduped for
+    the next batch. At least one target must still be covered.
+    """
     errors = sorted(Draft202012Validator(dedupe_schema()).iter_errors(payload), key=lambda e: list(e.path))
     if errors:
         first = errors[0]
@@ -289,19 +319,33 @@ def validate_dedupe_payload(
         for raw_id in cluster.get("ids") or []:
             row_id = _int(raw_id)
             if row_id not in allowed:
+                if partial:
+                    continue
                 raise OutputValidationError(f"dedupe cluster contains unexpected id {row_id}")
             if row_id in seen_any:
+                if partial:
+                    continue
                 raise OutputValidationError(f"dedupe id {row_id} appears more than once")
             seen_any.add(row_id)
             ids.append(row_id)
         cluster_target_ids = [row_id for row_id in ids if row_id in target_ids]
         cluster_anchor_ids = [row_id for row_id in ids if row_id in anchor_ids]
         if not cluster_target_ids:
+            if partial:
+                continue
             raise OutputValidationError("dedupe cluster must contain at least one target id")
         if len(cluster_anchor_ids) > 1:
-            raise OutputValidationError("dedupe cluster must not merge canonical anchors")
+            if not partial:
+                raise OutputValidationError("dedupe cluster must not merge canonical anchors")
+            # Keep the first anchor; the others stay canonical on their own.
+            dropped = set(cluster_anchor_ids[1:])
+            ids = [row_id for row_id in ids if row_id not in dropped]
         seen_targets.update(cluster_target_ids)
         cleaned.append({"ids": ids, "reason": str(cluster.get("reason") or "")})
+    if partial:
+        if not seen_targets:
+            raise OutputValidationError("dedupe output covered none of the target ids")
+        return cleaned
     if seen_targets != target_ids:
         missing = sorted(target_ids - seen_targets)
         extra = sorted(seen_targets - target_ids)
@@ -331,7 +375,15 @@ def dedupe_mapping_from_clusters(
     return mapping
 
 
-def validate_ranker_payload(payload: dict[str, Any], *, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def validate_ranker_payload(
+    payload: dict[str, Any], *, targets: list[dict[str, Any]], partial: bool = False
+) -> list[dict[str, Any]]:
+    """Validate ranker rows.
+
+    With ``partial`` (local models), already-ranked or unknown ids and repeats
+    are dropped, swapped reward bounds are fixed, and targets the model left out
+    stay unranked for the next batch. At least one target must still be ranked.
+    """
     errors = sorted(Draft202012Validator(ranker_schema()).iter_errors(payload), key=lambda e: list(e.path))
     if errors:
         first = errors[0]
@@ -343,13 +395,24 @@ def validate_ranker_payload(payload: dict[str, Any], *, targets: list[dict[str, 
     for item in payload.get("rankings") or []:
         row_id = _int(item["id"])
         if row_id not in target_ids:
+            if partial:
+                continue
             raise OutputValidationError(f"ranker returned unexpected id {row_id}")
         if row_id in seen:
+            if partial:
+                continue
             raise OutputValidationError(f"ranker id {row_id} appears more than once")
-        if _int(item["minimum_reward"]) > _int(item["maximum_reward"]):
-            raise OutputValidationError(f"ranker id {row_id} has minimum_reward > maximum_reward")
+        row = dict(item)
+        if _int(row["minimum_reward"]) > _int(row["maximum_reward"]):
+            if not partial:
+                raise OutputValidationError(f"ranker id {row_id} has minimum_reward > maximum_reward")
+            row["minimum_reward"], row["maximum_reward"] = row["maximum_reward"], row["minimum_reward"]
         seen.add(row_id)
-        out.append(dict(item))
+        out.append(row)
+    if partial:
+        if not seen:
+            raise OutputValidationError("ranker output ranked none of the target ids")
+        return out
     if seen != target_ids:
         raise OutputValidationError(f"ranker target coverage mismatch missing={sorted(target_ids - seen)}")
     return out
@@ -363,8 +426,11 @@ def rank_updates_from_payload(
     rank_run_id: int,
     model: str,
     prompt_filled: str,
+    partial: bool = False,
 ) -> list[dict[str, Any]]:
-    items_by_id = {_int(item["id"]): item for item in validate_ranker_payload(payload, targets=targets)}
+    items_by_id = {
+        _int(item["id"]): item for item in validate_ranker_payload(payload, targets=targets, partial=partial)
+    }
     combined: list[dict[str, Any]] = []
     for anchor in anchors:
         combined.append(
@@ -375,7 +441,9 @@ def rank_updates_from_payload(
             }
         )
     for row in targets:
-        item = items_by_id[_int(row["id"])]
+        item = items_by_id.get(_int(row["id"]))
+        if item is None:
+            continue  # partial: left unranked for the next batch
         combined.append(
             {
                 "id": _int(row["id"]),
@@ -881,7 +949,8 @@ class PostProcessor:
             if not current or current["status"] != "post_processing":
                 return False
             vulnerabilities = self.db.load_vulnerabilities(conn, scan_id)
-            anchors, targets = dedupe_batch(vulnerabilities)
+            selection = post_processing_model_selection(current)
+            anchors, targets = dedupe_batch(vulnerabilities, post_batch_size(selection.model_provider))
             if not targets:
                 return False
             prompt = build_dedupe_prompt(current, anchors, targets)
@@ -907,8 +976,10 @@ class PostProcessor:
         if metadata_id is None:
             return False
 
+        partial = is_local_provider(selection.model_provider)
+
         def validator(payload):
-            return validate_dedupe_payload(payload, anchors=anchors, targets=targets)
+            return validate_dedupe_payload(payload, anchors=anchors, targets=targets, partial=partial)
 
         started = now_utc()
         try:
@@ -921,7 +992,7 @@ class PostProcessor:
                 validator=validator,
                 kind="dedupe",
             )
-            clusters = validate_dedupe_payload(payload, anchors=anchors, targets=targets)
+            clusters = validate_dedupe_payload(payload, anchors=anchors, targets=targets, partial=partial)
             mapping = dedupe_mapping_from_clusters(clusters, scan_id=scan_id, anchors=anchors, targets=targets)
             run_time_ms = int((now_utc() - started).total_seconds() * 1000)
             with self.db.connect() as conn:
@@ -970,7 +1041,8 @@ class PostProcessor:
             if not current or current["status"] != "post_processing":
                 return False
             vulnerabilities = self.db.load_vulnerabilities(conn, scan_id)
-            anchors, targets = ranker_batch(vulnerabilities)
+            selection = post_processing_model_selection(current)
+            anchors, targets = ranker_batch(vulnerabilities, post_batch_size(selection.model_provider))
             if not targets:
                 return False
             prompt = build_ranker_prompt(current, anchors, targets)
@@ -997,8 +1069,10 @@ class PostProcessor:
         if metadata_id is None:
             return False
 
+        partial = not api_key and is_local_provider(selection.model_provider)
+
         def validator(payload):
-            return validate_ranker_payload(payload, targets=targets)
+            return validate_ranker_payload(payload, targets=targets, partial=partial)
 
         started = now_utc()
         try:
@@ -1029,6 +1103,7 @@ class PostProcessor:
                 rank_run_id=metadata_id,
                 model=ranked_model,
                 prompt_filled=prompt,
+                partial=partial,
             )
             run_time_ms = int((now_utc() - started).total_seconds() * 1000)
             with self.db.connect() as conn:
