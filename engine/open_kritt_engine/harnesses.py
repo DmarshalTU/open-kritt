@@ -928,13 +928,23 @@ def _docker_container_name(repo_dir: str) -> str:
 
 
 def _container_path(value: str, *, repo_dir: str, home: str) -> str:
+    """Map engine data paths to the paths mounted inside a scan container.
+
+    Whole arguments such as the workspace and schema file start with those
+    roots. Provider config also embeds a catalog path inside a ``-c`` value,
+    so the same roots are replaced wherever they appear.
+    """
+
+    translated = value
+    replacements = []
     for host_root, container_root in ((repo_dir, CLAUDE_RUNNER_WORKDIR), (home, CLAUDE_RUNNER_HOME)):
-        if value == host_root:
-            return container_root
-        prefix = host_root.rstrip(os.sep) + os.sep
-        if value.startswith(prefix):
-            return container_root + "/" + value[len(prefix) :].replace(os.sep, "/")
-    return value
+        if host_root:
+            replacements.append((host_root.rstrip(os.sep), container_root.rstrip("/")))
+    replacements.sort(key=lambda item: len(item[0]), reverse=True)
+    for host_root, container_root in replacements:
+        if host_root in translated:
+            translated = translated.replace(host_root, container_root)
+    return translated
 
 
 def _scan_docker_command(

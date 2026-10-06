@@ -200,6 +200,9 @@ def prepare_job_workspace(
     elif needs_grok_home:
         grok_home.mkdir(parents=True, exist_ok=True)
     if needs_codex_home:
+        # Codex exits immediately when CODEX_HOME is missing. API-key providers
+        # such as Local and DeepSeek have no login directory to copy.
+        codex_home.mkdir(parents=True, exist_ok=True)
         _install_agent_skills(codex_home, agent_skills or [])
     if needs_claude_home:
         _install_agent_skills(claude_home, agent_skills or [])

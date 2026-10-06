@@ -1967,6 +1967,31 @@ def test_job_workspace_skips_transient_codex_tmp(monkeypatch, tmp_path):
     assert "DATABASE_URL" not in workspace.env
 
 
+def test_container_path_rewrites_a_catalog_path_embedded_in_config():
+    home = "/data/jobs/metadata-1/home"
+    repo = "/data/jobs/metadata-1/repos/target"
+    catalog = f"{home}/tmp/ollama_models.json"
+
+    assert (
+        harnesses._container_path(f'model_catalog_json="{catalog}"', repo_dir=repo, home=home)
+        == 'model_catalog_json="/home/runner/tmp/ollama_models.json"'
+    )
+    assert harnesses._container_path(repo, repo_dir=repo, home=home) == "/workspace"
+
+
+def test_ollama_job_home_creates_an_empty_codex_directory(monkeypatch, tmp_path):
+    monkeypatch.delenv("ENGINE_RUNTIME_CONFIG_PATH", raising=False)
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama")
+
+    workspace = prepare_job_workspace(str(tmp_path / "data"), 321, harness_name="codex", model_provider="ollama")
+
+    codex_home = Path(workspace.env["HOME"]) / ".codex"
+    assert codex_home.is_dir()
+    assert workspace.env["CODEX_HOME"] == str(codex_home)
+    assert not (codex_home / "auth.json").exists()
+    assert workspace.env["OLLAMA_API_KEY"] == "ollama"
+
+
 def test_job_workspace_copies_only_claude_credentials(monkeypatch, tmp_path):
     monkeypatch.delenv("ENGINE_RUNTIME_CONFIG_PATH", raising=False)
     claude_home = tmp_path / "source-claude"
