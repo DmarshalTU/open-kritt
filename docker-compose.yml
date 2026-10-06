@@ -36,6 +36,8 @@ services:
       OPEN_KRITT_OPENAI_API_KEY_CONFIGURED: '${OPENAI_API_KEY:+1}'
       OPEN_KRITT_ANTHROPIC_API_KEY_CONFIGURED: '${ANTHROPIC_API_KEY:+1}'
       OPEN_KRITT_DEEPSEEK_API_KEY_CONFIGURED: '${DEEPSEEK_API_KEY:+1}'
+      OPEN_KRITT_OLLAMA_API_KEY_CONFIGURED: '${OLLAMA_API_KEY:+1}'
+      OPEN_KRITT_TYPESAFE_API_KEY_CONFIGURED: '${TYPESAFE_API_KEY:+1}'
       OPEN_KRITT_OPENROUTER_API_KEY_CONFIGURED: '${OPENROUTER_API_KEY:+1}'
       OPEN_KRITT_XAI_API_KEY_CONFIGURED: '${XAI_API_KEY:+1}'
       OPEN_KRITT_CODEX_LOGIN_CONFIGURED: '${CODEX_LOGIN_CONFIGURED:+1}'
@@ -144,6 +146,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       XAI_API_KEY: ${XAI_API_KEY:-}
       CURSOR_API_KEY: ${CURSOR_API_KEY:-}
@@ -158,6 +163,8 @@ services:
         condition: service_healthy
       executor-view:
         condition: service_healthy
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     restart: unless-stopped
     volumes:
       - ./engine:/app

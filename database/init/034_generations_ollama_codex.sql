@@ -1,6 +1,4 @@
--- Allow xAI Grok Build generations alongside existing provider/harness pairs.
--- Startup reapplies every init file, so this check also keeps providers added
--- later. Narrowing it would reject generations those later files already stored.
+-- Allow local Ollama draft generation through the Codex harness.
 
 ALTER TABLE public.generations
     DROP CONSTRAINT IF EXISTS generations_model_provider_check;
@@ -8,13 +6,6 @@ ALTER TABLE public.generations
 ALTER TABLE public.generations
     ADD CONSTRAINT generations_model_provider_check
     CHECK (model_provider IN ('codex', 'claude', 'openrouter', 'xai', 'deepseek', 'ollama'));
-
-ALTER TABLE public.generations
-    DROP CONSTRAINT IF EXISTS generations_harness_check;
-
-ALTER TABLE public.generations
-    ADD CONSTRAINT generations_harness_check
-    CHECK (harness IN ('codex', 'claude-code', 'grok-build'));
 
 ALTER TABLE public.generations
     DROP CONSTRAINT IF EXISTS generations_check;

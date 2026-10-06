@@ -15,6 +15,7 @@ from open_kritt_engine.model_catalog import (
     fetch_anthropic_models,
     fetch_codex_models,
     fetch_deepseek_models,
+    fetch_ollama_models,
     fetch_openrouter_models,
     fetch_xai_models,
     model_supports_service_tier,
@@ -336,6 +337,33 @@ def test_fetch_deepseek_models_uses_account_catalog_and_supported_efforts(monkey
     request, timeout = requests[0]
     assert request.full_url == "https://api.deepseek.com/models"
     assert request.get_header("Authorization") == "Bearer deepseek-test-key"
+    assert timeout == 2
+
+
+def test_fetch_ollama_models_uses_the_local_server_and_prefers_the_fitted_coder(monkeypatch):
+    requests = []
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        return io.BytesIO(
+            json.dumps(
+                {"data": [{"id": "llama3.2:3b"}, {"id": "qwen2.5-coder:7b"}, {"id": "qwen2.5-coder:7b"}]}
+            ).encode("utf-8")
+        )
+
+    monkeypatch.setattr(model_catalog, "urlopen", fake_urlopen)
+    models, default_model = fetch_ollama_models(
+        {"OLLAMA_API_KEY": "ollama", "OLLAMA_BASE_URL": "http://host.docker.internal:11434/v1"},
+        2,
+    )
+
+    assert [model["id"] for model in models] == ["llama3.2:3b", "qwen2.5-coder:7b"]
+    assert models[1]["isDefault"] is True
+    assert models[1]["thinkingEfforts"] == ["low"]
+    assert default_model == "qwen2.5-coder:7b"
+    request, timeout = requests[0]
+    assert request.full_url == "http://host.docker.internal:11434/v1/models"
+    assert request.get_header("Authorization") == "Bearer ollama"
     assert timeout == 2
 
 

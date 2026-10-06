@@ -1,5 +1,5 @@
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+import { test } from "node:test";
+import assert from "node:assert/strict";
 import {
   validateSeverityRanker,
   validateScan,
@@ -9,306 +9,362 @@ import {
   validateModelSelection,
   validateModelOverrides,
   ValidationError,
-} from '../src/lib/validation.js';
+} from "../src/lib/validation.js";
 
 const terminalOutput = {
-  explanation: 'string',
-  file_path: 'string',
-  line: 'number',
-  malicious_input_example: 'string',
-  summary: 'string',
-  trigger_flow: 'array',
-  vulnerability_type: 'string',
-  malicious_actor: 'string',
+  explanation: "string",
+  file_path: "string",
+  line: "number",
+  malicious_input_example: "string",
+  summary: "string",
+  trigger_flow: "array",
+  vulnerability_type: "string",
+  malicious_actor: "string",
 };
 
 function workflowWithTerminal(outputFormat) {
   return {
-    name: 'generated-workflow',
+    name: "generated-workflow",
     levels: [
       {
         depth: 0,
         multiOutput: true,
         outputFormat,
-        steps: [{ name: 'Investigate', content: 'Analyze {{repo_full}}.' }],
+        steps: [{ name: "Investigate", content: "Analyze {{repo_full}}." }],
       },
     ],
   };
 }
 
-test('validateSeverityRanker requires name and content', () => {
-  assert.throws(() => validateSeverityRanker({ name: '', content: '' }), ValidationError);
-  const ok = validateSeverityRanker({ name: 'baseline', content: '1. rule', description: '  trim me  ' });
-  assert.equal(ok.name, 'baseline');
-  assert.equal(ok.description, 'trim me');
-  assert.equal(ok.content, '1. rule');
+test("validateSeverityRanker requires name and content", () => {
+  assert.throws(
+    () => validateSeverityRanker({ name: "", content: "" }),
+    ValidationError,
+  );
+  const ok = validateSeverityRanker({
+    name: "baseline",
+    content: "1. rule",
+    description: "  trim me  ",
+  });
+  assert.equal(ok.name, "baseline");
+  assert.equal(ok.description, "trim me");
+  assert.equal(ok.content, "1. rule");
 });
 
-test('generation and scan model selections share normalization rules', () => {
+test("generation and scan model selections share normalization rules", () => {
   const selection = validateModelSelection({
-    model: ' gpt-5.6 ',
-    model_provider: 'CODEX',
-    harness: 'codex-cli',
-    thinking_effort: 'high',
+    model: " gpt-5.6 ",
+    model_provider: "CODEX",
+    harness: "codex-cli",
+    thinking_effort: "high",
   });
   assert.deepEqual(selection, {
-    model: 'gpt-5.6',
-    modelProvider: 'codex',
-    harness: 'codex',
-    thinkingEffort: 'high',
+    model: "gpt-5.6",
+    modelProvider: "codex",
+    harness: "codex",
+    thinkingEffort: "high",
   });
   assert.deepEqual(
     validateGeneration({
-      kind: 'post_script',
-      request: '  Generate a triage summary. ',
-      model: 'gpt-5.6',
-      model_provider: 'codex',
-      harness: 'codex',
-      thinking_effort: 'high',
+      kind: "post_script",
+      request: "  Generate a triage summary. ",
+      model: "gpt-5.6",
+      model_provider: "codex",
+      harness: "codex",
+      thinking_effort: "high",
     }),
     {
-      kind: 'post_script',
-      request: 'Generate a triage summary.',
+      kind: "post_script",
+      request: "Generate a triage summary.",
       ...selection,
-    }
-  );
-
-  assert.throws(
-    () => validateGeneration({ kind: 'unknown', request: '', model: '', harness: '' }),
-    (error) =>
-      error instanceof ValidationError &&
-      ['kind', 'request', 'model', 'harness'].every((field) => error.errors.some((item) => item.field === field))
+    },
   );
 
   assert.throws(
     () =>
       validateGeneration({
-        kind: 'workflow',
-        request: 'x'.repeat(20_001),
-        model: 'gpt-5.6',
-        model_provider: 'codex',
-        harness: 'codex',
+        kind: "unknown",
+        request: "",
+        model: "",
+        harness: "",
       }),
     (error) =>
       error instanceof ValidationError &&
-      error.errors.some((item) => item.field === 'request' && item.message.includes('20,000'))
+      ["kind", "request", "model", "harness"].every((field) =>
+        error.errors.some((item) => item.field === field),
+      ),
   );
-});
 
-test('model selection accepts the provider effort union', () => {
-  for (const thinkingEffort of ['default', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']) {
-    assert.equal(
-      validateModelSelection({
-        model: 'custom-model',
-        model_provider: 'codex',
-        harness: 'codex',
-        thinking_effort: thinkingEffort,
-      }).thinkingEffort,
-      thinkingEffort
-    );
-  }
   assert.throws(
     () =>
-      validateModelSelection({
-        model: 'claude-fable-5',
-        model_provider: 'claude',
-        harness: 'claude-code',
-        thinking_effort: 'ultra',
+      validateGeneration({
+        kind: "workflow",
+        request: "x".repeat(20_001),
+        model: "gpt-5.6",
+        model_provider: "codex",
+        harness: "codex",
       }),
     (error) =>
       error instanceof ValidationError &&
       error.errors.some(
-        (item) => item.field === 'thinking_effort' && item.message.includes('not supported by harness "claude-code"')
-      )
+        (item) => item.field === "request" && item.message.includes("20,000"),
+      ),
   );
 });
 
-test('model selection rejects non-string CLI arguments instead of coercing them', () => {
+test("model selection accepts the provider effort union", () => {
+  for (const thinkingEffort of [
+    "default",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra",
+  ]) {
+    assert.equal(
+      validateModelSelection({
+        model: "custom-model",
+        model_provider: "codex",
+        harness: "codex",
+        thinking_effort: thinkingEffort,
+      }).thinkingEffort,
+      thinkingEffort,
+    );
+  }
+  assert.throws(
+    () =>
+      validateModelSelection({
+        model: "claude-fable-5",
+        model_provider: "claude",
+        harness: "claude-code",
+        thinking_effort: "ultra",
+      }),
+    (error) =>
+      error instanceof ValidationError &&
+      error.errors.some(
+        (item) =>
+          item.field === "thinking_effort" &&
+          item.message.includes('not supported by harness "claude-code"'),
+      ),
+  );
+});
+
+test("model selection rejects non-string CLI arguments instead of coercing them", () => {
   const base = {
-    model: 'gpt-5.6',
-    model_provider: 'codex',
-    harness: 'codex',
-    thinking_effort: 'medium',
+    model: "gpt-5.6",
+    model_provider: "codex",
+    harness: "codex",
+    thinking_effort: "medium",
   };
   for (const [field, value, errorField] of [
-    ['model', ['gpt-5.6'], 'model'],
-    ['model_provider', { provider: 'codex' }, 'model_provider'],
-    ['harness', 1, 'harness'],
-    ['thinking_effort', ['high'], 'thinking_effort'],
+    ["model", ["gpt-5.6"], "model"],
+    ["model_provider", { provider: "codex" }, "model_provider"],
+    ["harness", 1, "harness"],
+    ["thinking_effort", ["high"], "thinking_effort"],
   ]) {
     assert.throws(
       () => validateModelSelection({ ...base, [field]: value }),
       (error) =>
         error instanceof ValidationError &&
-        error.errors.some((item) => item.field === errorField && item.message.includes('must be a string'))
+        error.errors.some(
+          (item) =>
+            item.field === errorField &&
+            item.message.includes("must be a string"),
+        ),
     );
   }
 
-  assert.deepEqual(validateModelSelection({ model: 'vendor/model', harness: 'claude-code' }), {
-    model: 'vendor/model',
-    modelProvider: 'openrouter',
-    harness: 'claude-code',
-    thinkingEffort: 'medium',
-  });
+  assert.deepEqual(
+    validateModelSelection({ model: "vendor/model", harness: "claude-code" }),
+    {
+      model: "vendor/model",
+      modelProvider: "openrouter",
+      harness: "claude-code",
+      thinkingEffort: "medium",
+    },
+  );
 
   assert.throws(
-    () => validateModelSelection({ ...base, model: 'x'.repeat(201) }),
+    () => validateModelSelection({ ...base, model: "x".repeat(201) }),
     (error) =>
       error instanceof ValidationError &&
-      error.errors.some((item) => item.field === 'model' && item.message.includes('200 characters or fewer'))
+      error.errors.some(
+        (item) =>
+          item.field === "model" &&
+          item.message.includes("200 characters or fewer"),
+      ),
   );
 
   for (const [field, value, message] of [
-    ['model', '   ', 'A model is required.'],
-    ['harness', '\t', 'A harness is required.'],
+    ["model", "   ", "A model is required."],
+    ["harness", "\t", "A harness is required."],
   ]) {
     assert.throws(
       () => validateModelSelection({ ...base, [field]: value }),
       (error) =>
         error instanceof ValidationError &&
-        error.errors.some((item) => item.field === field && item.message === message)
+        error.errors.some(
+          (item) => item.field === field && item.message === message,
+        ),
     );
   }
 });
 
-test('validateScan keeps post-processing thinking effort separate from workflow effort', () => {
+test("validateScan keeps post-processing thinking effort separate from workflow effort", () => {
   const base = {
-    workflowId: '1',
-    postScriptId: '1',
-    repo_kind: 'remote',
-    repo_full: 'https://github.com/org/repo',
-    commit_sha: 'HEAD',
-    model: 'test-model',
-    model_provider: 'codex',
-    harness: 'codex',
-    thinking_effort: 'high',
-    severity_ranker: 'Rank by impact.',
+    workflowId: "1",
+    postScriptId: "1",
+    repo_kind: "remote",
+    repo_full: "https://github.com/org/repo",
+    commit_sha: "HEAD",
+    model: "test-model",
+    model_provider: "codex",
+    harness: "codex",
+    thinking_effort: "high",
+    severity_ranker: "Rank by impact.",
   };
 
-  const valid = validateScan({ ...base, post_processing_thinking_effort: 'medium' });
-
-  assert.equal(valid.thinkingEffort, 'high');
-  assert.equal(valid.postProcessingThinkingEffort, 'medium');
-  assert.deepEqual(valid.postProcessingSelection, {
-    model: 'test-model',
-    modelProvider: 'codex',
-    harness: 'codex',
-    thinkingEffort: 'medium',
+  const valid = validateScan({
+    ...base,
+    post_processing_thinking_effort: "medium",
   });
-  assert.equal(validateScan(base).postProcessingThinkingEffort, 'high');
+
+  assert.equal(valid.thinkingEffort, "high");
+  assert.equal(valid.postProcessingThinkingEffort, "medium");
+  assert.deepEqual(valid.postProcessingSelection, {
+    model: "test-model",
+    modelProvider: "codex",
+    harness: "codex",
+    thinkingEffort: "medium",
+  });
+  assert.equal(validateScan(base).postProcessingThinkingEffort, "high");
   assert.throws(
     () =>
       validateScan({
         ...base,
-        model_provider: 'claude',
-        harness: 'claude-code',
-        post_processing_thinking_effort: 'ultra',
+        model_provider: "claude",
+        harness: "claude-code",
+        post_processing_thinking_effort: "ultra",
       }),
     (error) =>
-      error instanceof ValidationError && error.errors.some((item) => item.field === 'post_processing_thinking_effort')
+      error instanceof ValidationError &&
+      error.errors.some(
+        (item) => item.field === "post_processing_thinking_effort",
+      ),
   );
 
   const independent = validateScan({
     ...base,
-    post_processing_model: 'claude-sonnet',
-    post_processing_model_provider: 'claude',
-    post_processing_harness: 'claude-code',
-    post_processing_thinking_effort: 'medium',
+    post_processing_model: "claude-sonnet",
+    post_processing_model_provider: "claude",
+    post_processing_harness: "claude-code",
+    post_processing_thinking_effort: "medium",
   });
   assert.equal(independent.postProcessingModelOverride, true);
   assert.deepEqual(independent.postProcessingSelection, {
-    model: 'claude-sonnet',
-    modelProvider: 'claude',
-    harness: 'claude-code',
-    thinkingEffort: 'medium',
+    model: "claude-sonnet",
+    modelProvider: "claude",
+    harness: "claude-code",
+    thinkingEffort: "medium",
   });
 });
 
-test('depth model overrides normalize complete tuples and enforce workflow depths', () => {
+test("depth model overrides normalize complete tuples and enforce workflow depths", () => {
   assert.deepEqual(
     validateModelOverrides(
       {
         0: {
-          model: ' gpt-5.6 ',
-          modelProvider: 'CODEX',
-          harness: 'codex-cli',
-          thinkingEffort: 'high',
+          model: " gpt-5.6 ",
+          modelProvider: "CODEX",
+          harness: "codex-cli",
+          thinkingEffort: "high",
         },
         2: {
-          model: ' anthropic/claude-sonnet ',
-          model_provider: 'openrouter',
-          harness: 'claude-code',
-          thinking_effort: 'medium',
+          model: " anthropic/claude-sonnet ",
+          model_provider: "openrouter",
+          harness: "claude-code",
+          thinking_effort: "medium",
         },
       },
-      { allowedDepths: [0, 1, 2] }
+      { allowedDepths: [0, 1, 2] },
     ),
     {
       0: {
-        model: 'gpt-5.6',
-        model_provider: 'codex',
-        harness: 'codex',
-        thinking_effort: 'high',
+        model: "gpt-5.6",
+        model_provider: "codex",
+        harness: "codex",
+        thinking_effort: "high",
       },
       2: {
-        model: 'anthropic/claude-sonnet',
-        model_provider: 'openrouter',
-        harness: 'claude-code',
-        thinking_effort: 'medium',
+        model: "anthropic/claude-sonnet",
+        model_provider: "openrouter",
+        harness: "claude-code",
+        thinking_effort: "medium",
       },
-    }
+    },
   );
 
   assert.throws(
     () =>
       validateModelOverrides(
         {
-          '01': {
-            model: 'gpt-5.6',
-            model_provider: 'codex',
-            harness: 'codex',
+          "01": {
+            model: "gpt-5.6",
+            model_provider: "codex",
+            harness: "codex",
           },
           3: {
-            model: 'claude-sonnet',
-            model_provider: 'claude',
-            harness: 'codex',
+            model: "claude-sonnet",
+            model_provider: "claude",
+            harness: "codex",
           },
         },
-        { allowedDepths: [0, 1, 2] }
+        { allowedDepths: [0, 1, 2] },
       ),
     (error) =>
       error instanceof ValidationError &&
-      error.errors.some((item) => item.field === 'model_overrides.01') &&
-      error.errors.some((item) => item.field === 'model_overrides.3') &&
-      error.errors.some((item) => item.field === 'model_overrides.3.harness')
+      error.errors.some((item) => item.field === "model_overrides.01") &&
+      error.errors.some((item) => item.field === "model_overrides.3") &&
+      error.errors.some((item) => item.field === "model_overrides.3.harness"),
   );
 });
 
-test('validateWorkflow enforces canonical terminal vulnerability field types', () => {
-  const valid = validateWorkflow(workflowWithTerminal({ ...terminalOutput, exploitable: 'boolean' }));
-  assert.deepEqual(valid.levels[0].outputFormat, { ...terminalOutput, exploitable: 'boolean' });
+test("validateWorkflow enforces canonical terminal vulnerability field types", () => {
+  const valid = validateWorkflow(
+    workflowWithTerminal({ ...terminalOutput, exploitable: "boolean" }),
+  );
+  assert.deepEqual(valid.levels[0].outputFormat, {
+    ...terminalOutput,
+    exploitable: "boolean",
+  });
 
   for (const [key, type] of [
-    ['line', 'string'],
-    ['trigger_flow', 'object'],
-    ['exploitable', 'string'],
+    ["line", "string"],
+    ["trigger_flow", "object"],
+    ["exploitable", "string"],
   ]) {
     assert.throws(
-      () => validateWorkflow(workflowWithTerminal({ ...terminalOutput, [key]: type })),
+      () =>
+        validateWorkflow(
+          workflowWithTerminal({ ...terminalOutput, [key]: type }),
+        ),
       (error) =>
         error instanceof ValidationError &&
         error.errors.some(
-          (item) => item.field === 'terminal.outputFormat' && item.message.includes(`"${key}" must use type`)
-        )
+          (item) =>
+            item.field === "terminal.outputFormat" &&
+            item.message.includes(`"${key}" must use type`),
+        ),
     );
   }
 });
 
-test('validateWorkflow rejects duplicate output keys before array formats are normalized', () => {
+test("validateWorkflow rejects duplicate output keys before array formats are normalized", () => {
   const outputFormat = [
     ...Object.entries(terminalOutput).map(([key, type]) => ({ key, type })),
-    { key: 'confidence', type: 'string' },
-    { key: 'confidence', type: 'number' },
+    { key: "confidence", type: "string" },
+    { key: "confidence", type: "number" },
   ];
 
   assert.throws(
@@ -317,27 +373,33 @@ test('validateWorkflow rejects duplicate output keys before array formats are no
       error instanceof ValidationError &&
       error.errors.some(
         (item) =>
-          item.field === 'levels[0].outputFormat' &&
-          item.message === '"confidence" is used more than once in this output format.'
-      )
+          item.field === "levels[0].outputFormat" &&
+          item.message ===
+            '"confidence" is used more than once in this output format.',
+      ),
   );
 });
 
-test('validateWorkflow clears individual ancestor keys at a consumesAll boundary', () => {
+test("validateWorkflow clears individual ancestor keys at a consumesAll boundary", () => {
   const workflow = {
-    name: 'batched-workflow',
+    name: "batched-workflow",
     levels: [
       {
         depth: 0,
         multiOutput: true,
-        outputFormat: { entrypoint: 'string' },
-        steps: [{ name: 'Discover', content: 'Discover entrypoints in {{repo_full}}.' }],
+        outputFormat: { entrypoint: "string" },
+        steps: [
+          {
+            name: "Discover",
+            content: "Discover entrypoints in {{repo_full}}.",
+          },
+        ],
       },
       {
         depth: 1,
         multiOutput: true,
-        outputFormat: { flow: 'string' },
-        steps: [{ name: 'Trace', content: 'Trace {{entrypoint}}.' }],
+        outputFormat: { flow: "string" },
+        steps: [{ name: "Trace", content: "Trace {{entrypoint}}." }],
       },
       {
         depth: 2,
@@ -346,8 +408,9 @@ test('validateWorkflow clears individual ancestor keys at a consumesAll boundary
         outputFormat: terminalOutput,
         steps: [
           {
-            name: 'Investigate batch',
-            content: 'Investigate {{multi_output_depth_1}} without reusing ambiguous {{entrypoint}}.',
+            name: "Investigate batch",
+            content:
+              "Investigate {{multi_output_depth_1}} without reusing ambiguous {{entrypoint}}.",
           },
         ],
       },
@@ -358,24 +421,36 @@ test('validateWorkflow clears individual ancestor keys at a consumesAll boundary
     () => validateWorkflow(workflow),
     (error) =>
       error instanceof ValidationError &&
-      error.errors.some((item) => item.field.includes('steps[0].content') && item.message.includes('entrypoint'))
+      error.errors.some(
+        (item) =>
+          item.field.includes("steps[0].content") &&
+          item.message.includes("entrypoint"),
+      ),
   );
 
-  workflow.levels[2].steps[0].content = 'Investigate {{multi_output_depth_1}}.';
+  workflow.levels[2].steps[0].content = "Investigate {{multi_output_depth_1}}.";
   assert.doesNotThrow(() => validateWorkflow(workflow));
 });
 
 function boundWorkflow() {
   return {
-    name: 'bound-workflow',
+    name: "bound-workflow",
     levels: [
       {
         depth: 0,
         multiOutput: true,
-        outputFormat: { candidate: 'string' },
+        outputFormat: { candidate: "string" },
         steps: [
-          { clientId: 'source-a', name: 'Source A', content: 'Find candidates in {{repo_full}}.' },
-          { clientId: 'source-b', name: 'Source B', content: 'Find other candidates in {{repo_full}}.' },
+          {
+            clientId: "source-a",
+            name: "Source A",
+            content: "Find candidates in {{repo_full}}.",
+          },
+          {
+            clientId: "source-b",
+            name: "Source B",
+            content: "Find other candidates in {{repo_full}}.",
+          },
         ],
       },
       {
@@ -384,38 +459,51 @@ function boundWorkflow() {
         bindPrevious: true,
         outputFormat: terminalOutput,
         steps: [
-          { clientId: 'destination-a', boundSourceStepId: 'source-a', name: 'A', content: 'Check {{candidate}}.' },
-          { clientId: 'destination-b', boundSourceStepId: 'source-b', name: 'B', content: 'Check {{candidate}}.' },
+          {
+            clientId: "destination-a",
+            boundSourceStepId: "source-a",
+            name: "A",
+            content: "Check {{candidate}}.",
+          },
+          {
+            clientId: "destination-b",
+            boundSourceStepId: "source-b",
+            name: "B",
+            content: "Check {{candidate}}.",
+          },
         ],
       },
     ],
   };
 }
 
-test('validateWorkflow accepts an explicit one-to-one binding between adjacent depths', () => {
+test("validateWorkflow accepts an explicit one-to-one binding between adjacent depths", () => {
   const valid = validateWorkflow(boundWorkflow());
 
   assert.equal(valid.levels[1].bindPrevious, true);
   assert.equal(valid.levels[1].consumesAll, false);
   assert.deepEqual(
-    valid.levels[1].steps.map((step) => [step.clientId, step.boundSourceStepId]),
+    valid.levels[1].steps.map((step) => [
+      step.clientId,
+      step.boundSourceStepId,
+    ]),
     [
-      ['destination-a', 'source-a'],
-      ['destination-b', 'source-b'],
-    ]
+      ["destination-a", "source-a"],
+      ["destination-b", "source-b"],
+    ],
   );
 });
 
-test('validateWorkflow rejects incomplete, duplicate, and non-adjacent bindings', () => {
+test("validateWorkflow rejects incomplete, duplicate, and non-adjacent bindings", () => {
   for (const mutate of [
     (workflow) => {
       workflow.levels[1].steps.pop();
     },
     (workflow) => {
-      workflow.levels[1].steps[1].boundSourceStepId = 'source-a';
+      workflow.levels[1].steps[1].boundSourceStepId = "source-a";
     },
     (workflow) => {
-      workflow.levels[1].steps[1].boundSourceStepId = 'destination-a';
+      workflow.levels[1].steps[1].boundSourceStepId = "destination-a";
     },
     (workflow) => {
       workflow.levels[1].steps[1].boundSourceStepId = null;
@@ -427,35 +515,43 @@ test('validateWorkflow rejects incomplete, duplicate, and non-adjacent bindings'
       () => validateWorkflow(workflow),
       (error) =>
         error instanceof ValidationError &&
-        error.errors.some((item) => `${item.field} ${item.message}`.toLowerCase().includes('bind'))
+        error.errors.some((item) =>
+          `${item.field} ${item.message}`.toLowerCase().includes("bind"),
+        ),
     );
   }
 });
 
-test('validateWorkflow rejects binding at the root, with batching, or while binding is disabled', () => {
+test("validateWorkflow rejects binding at the root, with batching, or while binding is disabled", () => {
   const rootBound = boundWorkflow();
   rootBound.levels[0].bindPrevious = true;
   assert.throws(
     () => validateWorkflow(rootBound),
-    (error) => error instanceof ValidationError && error.errors.some((item) => item.message.includes('Depth 0'))
+    (error) =>
+      error instanceof ValidationError &&
+      error.errors.some((item) => item.message.includes("Depth 0")),
   );
 
   const batched = boundWorkflow();
   batched.levels[1].consumesAll = true;
   assert.throws(
     () => validateWorkflow(batched),
-    (error) => error instanceof ValidationError && error.errors.some((item) => item.message.includes('batch'))
+    (error) =>
+      error instanceof ValidationError &&
+      error.errors.some((item) => item.message.includes("batch")),
   );
 
   const disabled = boundWorkflow();
   disabled.levels[1].bindPrevious = false;
   assert.throws(
     () => validateWorkflow(disabled),
-    (error) => error instanceof ValidationError && error.errors.some((item) => item.message.includes('Enable bind'))
+    (error) =>
+      error instanceof ValidationError &&
+      error.errors.some((item) => item.message.includes("Enable bind")),
   );
 });
 
-test('validateWorkflow requires at least two steps in both bound depths', () => {
+test("validateWorkflow requires at least two steps in both bound depths", () => {
   const workflow = boundWorkflow();
   workflow.levels[0].steps = workflow.levels[0].steps.slice(0, 1);
   workflow.levels[1].steps = workflow.levels[1].steps.slice(0, 1);
@@ -463,78 +559,107 @@ test('validateWorkflow requires at least two steps in both bound depths', () => 
   assert.throws(
     () => validateWorkflow(workflow),
     (error) =>
-      error instanceof ValidationError && error.errors.some((item) => item.message.includes('at least two steps'))
+      error instanceof ValidationError &&
+      error.errors.some((item) => item.message.includes("at least two steps")),
   );
 });
 
-test('validatePostScript accepts scan, finding, and dynamic extra values', () => {
-  const content = '{{repo_full}} {{summary}} {{explanation}} {{extra}} {{extra.impact}}';
+test("validatePostScript accepts scan, finding, and dynamic extra values", () => {
+  const content =
+    "{{repo_full}} {{summary}} {{explanation}} {{extra}} {{extra.impact}}";
   const valid = validatePostScript({
-    name: 'context-aware',
+    name: "context-aware",
     content,
-    outputFormat: { _chip_risk: 'string' },
+    outputFormat: { _chip_risk: "string" },
   });
 
   assert.equal(valid.content, content);
-  assert.deepEqual(valid.outputFormat, { _chip_risk: 'string' });
+  assert.deepEqual(valid.outputFormat, { _chip_risk: "string" });
 });
 
-test('validatePostScript rejects keys outside the supported scan and finding context', () => {
+test("validatePostScript rejects keys outside the supported scan and finding context", () => {
   assert.throws(
     () =>
       validatePostScript({
-        name: 'unsupported-context',
-        content: 'Analyze {{workflow_step_output}}.',
-        outputFormat: { _chip_risk: 'string' },
+        name: "unsupported-context",
+        content: "Analyze {{workflow_step_output}}.",
+        outputFormat: { _chip_risk: "string" },
       }),
     (error) =>
       error instanceof ValidationError &&
-      error.errors.some((item) => item.field === 'content' && item.message.includes('non-reserved'))
+      error.errors.some(
+        (item) =>
+          item.field === "content" && item.message.includes("non-reserved"),
+      ),
   );
 });
 
-test('validatePostScript enforces reserved output conventions', () => {
-  for (const outputFormat of [{ _reserved_report: 'object' }, { _reserved_poc: 'array' }, { _chip_: 'string' }]) {
+test("validatePostScript enforces reserved output conventions", () => {
+  for (const outputFormat of [
+    { _reserved_report: "object" },
+    { _reserved_poc: "array" },
+    { _chip_: "string" },
+  ]) {
     assert.throws(
-      () => validatePostScript({ name: 'invalid-output', content: 'Analyze {{summary}}.', outputFormat }),
-      ValidationError
+      () =>
+        validatePostScript({
+          name: "invalid-output",
+          content: "Analyze {{summary}}.",
+          outputFormat,
+        }),
+      ValidationError,
     );
   }
 
   assert.deepEqual(
     validatePostScript({
-      name: 'renderable-output',
-      content: 'Analyze {{summary}}.',
-      outputFormat: { _reserved_report: 'string', _reserved_poc: 'string', _chip_severity: 'string' },
+      name: "renderable-output",
+      content: "Analyze {{summary}}.",
+      outputFormat: {
+        _reserved_report: "string",
+        _reserved_poc: "string",
+        _chip_severity: "string",
+      },
     }).outputFormat,
-    { _reserved_report: 'string', _reserved_poc: 'string', _chip_severity: 'string' }
+    {
+      _reserved_report: "string",
+      _reserved_poc: "string",
+      _chip_severity: "string",
+    },
   );
 });
 
-test('validatePostScript rejects duplicate output keys before array formats are normalized', () => {
+test("validatePostScript rejects duplicate output keys before array formats are normalized", () => {
   const outputFormat = JSON.stringify([
-    { key: '_chip_risk', type: 'string' },
-    { key: '_chip_risk', type: 'string' },
+    { key: "_chip_risk", type: "string" },
+    { key: "_chip_risk", type: "string" },
   ]);
 
   assert.throws(
-    () => validatePostScript({ name: 'duplicate-output', content: 'Analyze {{summary}}.', outputFormat }),
+    () =>
+      validatePostScript({
+        name: "duplicate-output",
+        content: "Analyze {{summary}}.",
+        outputFormat,
+      }),
     (error) =>
       error instanceof ValidationError &&
       error.errors.some(
-        (item) => item.field === 'outputFormat' && item.message === '"_chip_risk" is a duplicate output key.'
-      )
+        (item) =>
+          item.field === "outputFormat" &&
+          item.message === '"_chip_risk" is a duplicate output key.',
+      ),
   );
 });
 
-test('workflow and post-script validators reject malformed template references', () => {
+test("workflow and post-script validators reject malformed template references", () => {
   for (const content of [
-    'Analyze {{entry-point}}.',
-    'Analyze {{extra[impact]}}.',
-    'Analyze {{}}.',
-    'Analyze {{   }}.',
-    'Analyze {{repo_full.',
-    'Analyze repo_full}}.',
+    "Analyze {{entry-point}}.",
+    "Analyze {{extra[impact]}}.",
+    "Analyze {{}}.",
+    "Analyze {{   }}.",
+    "Analyze {{repo_full.",
+    "Analyze repo_full}}.",
   ]) {
     const workflow = workflowWithTerminal({ ...terminalOutput });
     workflow.levels[0].steps[0].content = content;
@@ -542,200 +667,280 @@ test('workflow and post-script validators reject malformed template references',
       () => validateWorkflow(workflow),
       (error) =>
         error instanceof ValidationError &&
-        error.errors.some((item) => item.field.includes('content') && item.message.includes('malformed template'))
+        error.errors.some(
+          (item) =>
+            item.field.includes("content") &&
+            item.message.includes("malformed template"),
+        ),
     );
 
     assert.throws(
       () =>
         validatePostScript({
-          name: 'malformed-template',
+          name: "malformed-template",
           content,
-          outputFormat: { _chip_risk: 'string' },
+          outputFormat: { _chip_risk: "string" },
         }),
       (error) =>
         error instanceof ValidationError &&
-        error.errors.some((item) => item.field === 'content' && item.message.includes('malformed template'))
+        error.errors.some(
+          (item) =>
+            item.field === "content" &&
+            item.message.includes("malformed template"),
+        ),
     );
   }
 });
 
-test('workflow and post-script validators accept spaced and dynamic template references', () => {
+test("workflow and post-script validators accept spaced and dynamic template references", () => {
   const workflow = workflowWithTerminal({ ...terminalOutput });
-  workflow.levels[0].steps[0].content = 'Analyze {{ repo_full }} for {{ extra.impact_1 }}.';
+  workflow.levels[0].steps[0].content =
+    "Analyze {{ repo_full }} for {{ extra.impact_1 }}.";
   assert.doesNotThrow(() => validateWorkflow(workflow));
   assert.doesNotThrow(() =>
     validatePostScript({
-      name: 'valid-template',
-      content: 'Summarize {{ summary }} for {{ extra.impact_1 }}.',
-      outputFormat: { _chip_risk: 'string' },
-    })
+      name: "valid-template",
+      content: "Summarize {{ summary }} for {{ extra.impact_1 }}.",
+      outputFormat: { _chip_risk: "string" },
+    }),
   );
 });
 
-test('workflow and post-script validators reject unsafe JavaScript object keys', () => {
-  for (const key of ['__proto__', 'constructor', 'prototype']) {
+test("workflow and post-script validators reject unsafe JavaScript object keys", () => {
+  for (const key of ["__proto__", "constructor", "prototype"]) {
     const workflowOutput = { ...terminalOutput };
-    Object.defineProperty(workflowOutput, key, { value: 'string', enumerable: true });
+    Object.defineProperty(workflowOutput, key, {
+      value: "string",
+      enumerable: true,
+    });
     assert.throws(
       () => validateWorkflow(workflowWithTerminal(workflowOutput)),
       (error) =>
         error instanceof ValidationError &&
-        error.errors.some((item) => item.field.includes('outputFormat') && item.message.includes(`"${key}"`))
+        error.errors.some(
+          (item) =>
+            item.field.includes("outputFormat") &&
+            item.message.includes(`"${key}"`),
+        ),
     );
 
-    const postScriptOutput = Object.fromEntries([[key, 'string']]);
+    const postScriptOutput = Object.fromEntries([[key, "string"]]);
     assert.throws(
       () =>
         validatePostScript({
-          name: 'unsafe-output-key',
-          content: 'Analyze {{summary}}.',
+          name: "unsafe-output-key",
+          content: "Analyze {{summary}}.",
           outputFormat: postScriptOutput,
         }),
-      ValidationError
+      ValidationError,
     );
 
     const unsafeExtraWorkflow = workflowWithTerminal({ ...terminalOutput });
     unsafeExtraWorkflow.levels[0].steps[0].content = `Analyze {{extra.${key}}}.`;
     assert.throws(
       () => validateWorkflow(unsafeExtraWorkflow),
-      (error) => error instanceof ValidationError && error.errors.some((item) => item.message.includes(`extra.${key}`))
+      (error) =>
+        error instanceof ValidationError &&
+        error.errors.some((item) => item.message.includes(`extra.${key}`)),
     );
   }
 });
 
-test('validateScan requires a non-empty severity ranker', () => {
+test("validateScan requires a non-empty severity ranker", () => {
   const base = {
-    workflowId: '1',
-    postScriptId: '1',
-    repo_kind: 'remote',
-    repo_full: 'https://github.com/org/repo',
-    commit_sha: 'HEAD',
-    model: 'gpt-5.5',
-    harness: 'codex',
+    workflowId: "1",
+    postScriptId: "1",
+    repo_kind: "remote",
+    repo_full: "https://github.com/org/repo",
+    commit_sha: "HEAD",
+    model: "gpt-5.5",
+    harness: "codex",
   };
   assert.throws(
     () => validateScan({ ...base }),
-    (e) => e instanceof ValidationError && e.errors.some((x) => x.field === 'severity_ranker')
+    (e) =>
+      e instanceof ValidationError &&
+      e.errors.some((x) => x.field === "severity_ranker"),
   );
-  const v = validateScan({ ...base, severity_ranker: 'A\n\nB' });
-  assert.equal(v.severityRanker, 'A\n\nB');
+  const v = validateScan({ ...base, severity_ranker: "A\n\nB" });
+  assert.equal(v.severityRanker, "A\n\nB");
 });
 
-test('validateScan requires workflow and post-script ids to be positive database ids', () => {
+test("validateScan requires workflow and post-script ids to be positive database ids", () => {
   const base = {
-    workflowId: '1',
-    postScriptId: '1',
-    repo_kind: 'remote',
-    repo_full: 'https://github.com/org/repo',
-    commit_sha: 'HEAD',
-    model: 'gpt-5.5',
-    harness: 'codex',
-    severity_ranker: 'Rank by impact.',
+    workflowId: "1",
+    postScriptId: "1",
+    repo_kind: "remote",
+    repo_full: "https://github.com/org/repo",
+    commit_sha: "HEAD",
+    model: "gpt-5.5",
+    harness: "codex",
+    severity_ranker: "Rank by impact.",
   };
 
-  assert.equal(validateScan({ ...base, workflowId: '0002', postScriptId: 3 }).workflowId, '2');
-  assert.equal(validateScan({ ...base, workflowId: '0002', postScriptId: 3 }).postScriptId, '3');
+  assert.equal(
+    validateScan({ ...base, workflowId: "0002", postScriptId: 3 }).workflowId,
+    "2",
+  );
+  assert.equal(
+    validateScan({ ...base, workflowId: "0002", postScriptId: 3 }).postScriptId,
+    "3",
+  );
 
   for (const [field, value] of [
-    ['workflowId', true],
-    ['workflowId', '1.5'],
-    ['workflowId', '-1'],
-    ['workflowId', '0'],
-    ['workflowId', {}],
-    ['workflowId', '9223372036854775808'],
-    ['postScriptId', false],
-    ['postScriptId', '1.5'],
-    ['postScriptId', '-1'],
-    ['postScriptId', '0'],
-    ['postScriptId', {}],
-    ['postScriptId', '9223372036854775808'],
+    ["workflowId", true],
+    ["workflowId", "1.5"],
+    ["workflowId", "-1"],
+    ["workflowId", "0"],
+    ["workflowId", {}],
+    ["workflowId", "9223372036854775808"],
+    ["postScriptId", false],
+    ["postScriptId", "1.5"],
+    ["postScriptId", "-1"],
+    ["postScriptId", "0"],
+    ["postScriptId", {}],
+    ["postScriptId", "9223372036854775808"],
   ]) {
     assert.throws(
       () => validateScan({ ...base, [field]: value }),
       (error) =>
         error instanceof ValidationError &&
-        error.errors.some((item) => item.field === field && item.message.includes('must be a positive integer ID'))
+        error.errors.some(
+          (item) =>
+            item.field === field &&
+            item.message.includes("must be a positive integer ID"),
+        ),
     );
   }
 });
 
-test('validateScan labels local repository contents as a snapshot, not a Git revision', () => {
+test("validateScan labels local repository contents as a snapshot, not a Git revision", () => {
   const valid = validateScan(
     {
-      workflowId: '1',
-      postScriptId: '1',
-      repo_kind: 'local',
-      repo_full: 'working-tree',
-      model: 'gpt-5.5',
-      harness: 'codex',
-      severity_ranker: 'Rank by impact.',
-      dependencies: [{ kind: 'local', repo_full: 'shared-library' }],
+      workflowId: "1",
+      postScriptId: "1",
+      repo_kind: "local",
+      repo_full: "working-tree",
+      model: "gpt-5.5",
+      harness: "codex",
+      severity_ranker: "Rank by impact.",
+      dependencies: [{ kind: "local", repo_full: "shared-library" }],
     },
-    { localNames: new Set(['working-tree', 'shared-library']) }
+    { localNames: new Set(["working-tree", "shared-library"]) },
   );
 
-  assert.equal(valid.commitSha, 'LOCAL_SNAPSHOT');
-  assert.equal(valid.dependencies[0].commitSha, 'LOCAL_SNAPSHOT');
+  assert.equal(valid.commitSha, "LOCAL_SNAPSHOT");
+  assert.equal(valid.dependencies[0].commitSha, "LOCAL_SNAPSHOT");
 });
 
-test('validateScan enforces model provider and harness compatibility after normalization', () => {
+test("validateScan enforces model provider and harness compatibility after normalization", () => {
   const base = {
-    workflowId: '1',
-    postScriptId: '1',
-    repo_kind: 'remote',
-    repo_full: 'https://github.com/org/repo',
-    commit_sha: 'HEAD',
-    model: 'test-model',
-    severity_ranker: 'Rank by impact.',
+    workflowId: "1",
+    postScriptId: "1",
+    repo_kind: "remote",
+    repo_full: "https://github.com/org/repo",
+    commit_sha: "HEAD",
+    model: "test-model",
+    severity_ranker: "Rank by impact.",
   };
 
-  assert.equal(validateScan({ ...base, model_provider: 'codex', harness: 'codex-cli' }).harness, 'codex');
-  assert.equal(validateScan({ ...base, model_provider: 'claude', harness: 'claude-code' }).modelProvider, 'claude');
-  assert.equal(validateScan({ ...base, model_provider: 'openrouter', harness: 'codex' }).harness, 'codex');
-  assert.equal(validateScan({ ...base, model_provider: 'openrouter', harness: 'claude-code' }).harness, 'claude-code');
-  assert.equal(validateScan({ ...base, model_provider: 'xai', harness: 'grok' }).harness, 'grok-build');
-  assert.equal(validateScan({ ...base, model_provider: 'xai', harness: 'grok-build' }).modelProvider, 'xai');
-  assert.equal(validateScan({ ...base, model_provider: 'deepseek', harness: 'codex' }).modelProvider, 'deepseek');
   assert.equal(
-    validateScan({ ...base, model_provider: 'xai', harness: 'grok-build', thinking_effort: 'xhigh' }).thinkingEffort,
-    'xhigh'
+    validateScan({ ...base, model_provider: "codex", harness: "codex-cli" })
+      .harness,
+    "codex",
+  );
+  assert.equal(
+    validateScan({ ...base, model_provider: "claude", harness: "claude-code" })
+      .modelProvider,
+    "claude",
+  );
+  assert.equal(
+    validateScan({ ...base, model_provider: "openrouter", harness: "codex" })
+      .harness,
+    "codex",
+  );
+  assert.equal(
+    validateScan({
+      ...base,
+      model_provider: "openrouter",
+      harness: "claude-code",
+    }).harness,
+    "claude-code",
+  );
+  assert.equal(
+    validateScan({ ...base, model_provider: "xai", harness: "grok" }).harness,
+    "grok-build",
+  );
+  assert.equal(
+    validateScan({ ...base, model_provider: "xai", harness: "grok-build" })
+      .modelProvider,
+    "xai",
+  );
+  assert.equal(
+    validateScan({ ...base, model_provider: "deepseek", harness: "codex" })
+      .modelProvider,
+    "deepseek",
+  );
+  assert.equal(
+    validateScan({ ...base, model_provider: "ollama", harness: "codex" })
+      .modelProvider,
+    "ollama",
+  );
+  assert.equal(
+    validateScan({
+      ...base,
+      model_provider: "xai",
+      harness: "grok-build",
+      thinking_effort: "xhigh",
+    }).thinkingEffort,
+    "xhigh",
   );
   assert.throws(
-    () => validateScan({ ...base, model_provider: 'xai', harness: 'grok-build', thinking_effort: 'max' }),
-    (e) => e instanceof ValidationError && e.errors.some((error) => error.field === 'thinking_effort')
+    () =>
+      validateScan({
+        ...base,
+        model_provider: "xai",
+        harness: "grok-build",
+        thinking_effort: "max",
+      }),
+    (e) =>
+      e instanceof ValidationError &&
+      e.errors.some((error) => error.field === "thinking_effort"),
   );
   assert.deepEqual(
     validateScan({
       ...base,
-      model_provider: 'codex',
-      harness: 'codex',
+      model_provider: "codex",
+      harness: "codex",
       model_overrides: {
         1: {
-          model: 'claude-sonnet',
-          model_provider: 'claude',
-          harness: 'claude-code',
-          thinking_effort: 'high',
+          model: "claude-sonnet",
+          model_provider: "claude",
+          harness: "claude-code",
+          thinking_effort: "high",
         },
       },
     }).modelOverrides,
     {
       1: {
-        model: 'claude-sonnet',
-        model_provider: 'claude',
-        harness: 'claude-code',
-        thinking_effort: 'high',
+        model: "claude-sonnet",
+        model_provider: "claude",
+        harness: "claude-code",
+        thinking_effort: "high",
       },
-    }
+    },
   );
 
   for (const [model_provider, harness] of [
-    ['codex', 'claude-code'],
-    ['claude', 'codex'],
-    ['openrouter', 'cursor'],
-    ['xai', 'codex'],
-    ['xai', 'claude-code'],
-    ['deepseek', 'claude-code'],
-    ['deepseek', 'grok-build'],
+    ["codex", "claude-code"],
+    ["claude", "codex"],
+    ["openrouter", "cursor"],
+    ["xai", "codex"],
+    ["xai", "claude-code"],
+    ["deepseek", "claude-code"],
+    ["deepseek", "grok-build"],
+    ["ollama", "claude-code"],
+    ["ollama", "grok-build"],
   ]) {
     assert.throws(
       () => validateScan({ ...base, model_provider, harness }),
@@ -743,10 +948,10 @@ test('validateScan enforces model provider and harness compatibility after norma
         e instanceof ValidationError &&
         e.errors.some(
           (error) =>
-            error.field === 'harness' &&
+            error.field === "harness" &&
             error.message.includes(`model provider "${model_provider}"`) &&
-            error.message.includes(`Harness "${harness}"`)
-        )
+            error.message.includes(`Harness "${harness}"`),
+        ),
     );
   }
 });

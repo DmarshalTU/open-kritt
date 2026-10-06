@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import urllib.parse
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -185,6 +186,10 @@ OPENROUTER_CURSOR_BASE_URL = "https://openrouter.ai/api/v1/cursor"
 OPENROUTER_CODEX_BASE_URL = "https://openrouter.ai/api/v1"
 DEEPSEEK_CODEX_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_CODEX_MODEL_CATALOG = "/app/open_kritt_engine/deepseek_models.json"
+OLLAMA_CODEX_BASE_URL = "http://host.docker.internal:11434/v1"
+OLLAMA_CODEX_MODEL_CATALOG = "/app/open_kritt_engine/ollama_models.json"
+# Codex already reserves the provider id "ollama", so the local server uses another name.
+OLLAMA_CODEX_PROVIDER_ID = "kritt-local"
 OPENROUTER_MODEL_ALIASES = {
     "glm-5.2": "z-ai/glm-5.2",
     "grok-4.5": "x-ai/grok-4.5",
@@ -203,7 +208,7 @@ CLAUDE_MODEL_ALIASES = {
     "opus-4.8": "claude-opus-4-8",
 }
 DEFAULT_MODEL_PROVIDER = "openrouter"
-MODEL_PROVIDERS = {"codex", "claude", "openrouter", "xai", "deepseek"}
+MODEL_PROVIDERS = {"codex", "claude", "openrouter", "xai", "deepseek", "ollama"}
 GROK_BUILD_THINKING_EFFORTS = frozenset({"low", "medium", "high", "xhigh"})
 DEFAULT_GROK_BUILD_MODEL = "grok-4.6"
 GROK_BUILD_RUNTIME_ENV = {
@@ -985,6 +990,8 @@ def _scan_docker_command(
         "ANTHROPIC_BASE_URL",
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "OLLAMA_API_KEY",
         *CLAUDE_OPENROUTER_MODEL_ENV_KEYS,
         "CODEX_MODEL_PROVIDER",
         "CLAUDE_CODE_MODEL_PROVIDER",
@@ -1018,6 +1025,10 @@ def _scan_docker_command(
         "--pids-limit",
         "512",
     ]
+    # Only local-model jobs may reach the host. Other scans stay on their
+    # private network and cannot open services running on this machine.
+    if env.get("OLLAMA_API_KEY"):
+        docker_cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
     data_dir = os.getenv("ENGINE_DATA_DIR")
     runner_cpus = runtime_float(
         "ENGINE_SCAN_RUNNER_CPUS",
@@ -1094,6 +1105,8 @@ def codex_cli_model_provider(
         return None
     if selected == "openrouter":
         return (configured or "openrouter") if allow_tools else "openrouter"
+    if selected == "ollama":
+        return OLLAMA_CODEX_PROVIDER_ID
     return selected or configured
 
 
@@ -1106,6 +1119,79 @@ def scan_model_provider(scan: dict[str, Any], fallback: str | None = None) -> st
     )
 
 
+def ollama_codex_base_url(env: dict[str, str] | None = None) -> str:
+    """Return a Codex-safe Ollama base URL, falling back when the value is unsafe."""
+
+    source = env if env is not None else os.environ
+    raw = str(source.get("OLLAMA_BASE_URL") or "").strip() or OLLAMA_CODEX_BASE_URL
+    if any(char in raw for char in ('"', "\\", "\n", "\r", " ", "\t")):
+        return OLLAMA_CODEX_BASE_URL
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return OLLAMA_CODEX_BASE_URL
+    return raw.rstrip("/")
+
+
+def ollama_codex_catalog(model: str) -> dict[str, Any]:
+    """One Codex catalog entry for the model selected on this job."""
+
+    slug = str(model or "").strip() or "qwen2.5-coder:7b"
+    return {
+        "models": [
+            {
+                "slug": slug,
+                "prefer_websockets": False,
+                "display_name": slug,
+                "description": "Local Ollama model. Context is limited by the GPU.",
+                "base_instructions": (
+                    "You are Codex, a coding agent. Follow the user's instructions precisely "
+                    "and use the available tools to inspect the workspace."
+                ),
+                "default_reasoning_level": None,
+                "supported_reasoning_levels": [],
+                "context_window": 32768,
+                "support_verbosity": False,
+                "default_verbosity": "low",
+                "apply_patch_tool_type": "freeform",
+                "web_search_tool_type": "text",
+                "shell_type": "shell_command",
+                "supports_parallel_tool_calls": True,
+                "input_modalities": ["text"],
+                "supports_image_detail_original": False,
+                "truncation_policy": {"mode": "tokens", "limit": 10000},
+                "tool_mode": None,
+                "multi_agent_version": "v2",
+                "use_responses_lite": False,
+                "include_skills_usage_instructions": False,
+                "auto_review_model_override": None,
+                "max_context_window": 32768,
+                "effective_context_window_percent": 90,
+                "auto_compact_token_limit": None,
+                "comp_hash": "3000",
+                "reasoning_summary_format": "experimental",
+                "default_reasoning_summary": "none",
+                "minimal_client_version": "0.144.0",
+                "availability_nux": None,
+                "upgrade": None,
+                "priority": 1,
+                "visibility": "list",
+                "supported_in_api": True,
+                "experimental_supported_tools": [],
+                "supports_search_tool": False,
+                "default_service_tier": None,
+                "supports_reasoning_summaries": False,
+            }
+        ]
+    }
+
+
+def prepare_ollama_codex_catalog(directory: str, model: str) -> str:
+    path = os.path.join(directory, "ollama_models.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(ollama_codex_catalog(model), handle)
+    return path
+
+
 def _append_deepseek_codex_config(command: list[str]) -> None:
     """Add the fixed, non-secret Codex provider definition for DeepSeek."""
 
@@ -1114,6 +1200,17 @@ def _append_deepseek_codex_config(command: list[str]) -> None:
     command.extend(["-c", 'model_providers.deepseek.env_key="DEEPSEEK_API_KEY"'])
     command.extend(["-c", 'model_providers.deepseek.wire_api="responses"'])
     command.extend(["-c", f'model_catalog_json="{DEEPSEEK_CODEX_MODEL_CATALOG}"'])
+    command.extend(["-c", 'web_search="disabled"'])
+
+
+def _append_ollama_codex_config(command: list[str], *, catalog_path: str | None = None) -> None:
+    """Add the non-secret Codex provider definition for a local Ollama server."""
+
+    command.extend(["-c", f'model_providers.{OLLAMA_CODEX_PROVIDER_ID}.name="Ollama"'])
+    command.extend(["-c", f'model_providers.{OLLAMA_CODEX_PROVIDER_ID}.base_url="{ollama_codex_base_url()}"'])
+    command.extend(["-c", f'model_providers.{OLLAMA_CODEX_PROVIDER_ID}.env_key="OLLAMA_API_KEY"'])
+    command.extend(["-c", f'model_providers.{OLLAMA_CODEX_PROVIDER_ID}.wire_api="responses"'])
+    command.extend(["-c", f'model_catalog_json="{catalog_path or OLLAMA_CODEX_MODEL_CATALOG}"'])
     command.extend(["-c", 'web_search="disabled"'])
 
 
@@ -1663,6 +1760,7 @@ def codex_exec_command(
     codex_model_provider: str | None = None,
     max_subagents: int | None = None,
     fast_mode: bool = False,
+    ollama_catalog_path: str | None = None,
 ) -> list[str]:
     """Build a Codex exec command while preserving scan-mode compatibility."""
 
@@ -1675,7 +1773,7 @@ def codex_exec_command(
         model = OPENROUTER_MODEL_ALIASES.get(model, model)
     command = ["codex"]
     selected_provider = normalize_model_provider(model_provider)
-    if allow_tools and selected_provider != "deepseek":
+    if allow_tools and selected_provider not in {"deepseek", "ollama"}:
         command.append("--search")
     command.extend(["exec", "--json", "-C", repo_dir, "-m", model])
     if allow_tools:
@@ -1708,9 +1806,11 @@ def codex_exec_command(
         command.extend(["-c", 'model_providers.openrouter.wire_api="responses"'])
     if cli_model_provider == "deepseek":
         _append_deepseek_codex_config(command)
+    if selected_provider == "ollama":
+        _append_ollama_codex_config(command, catalog_path=ollama_catalog_path)
     if cli_model_provider:
         command.extend(["-c", f"model_provider={json.dumps(cli_model_provider)}"])
-    if thinking_effort and thinking_effort != "default":
+    if thinking_effort and thinking_effort != "default" and selected_provider != "ollama":
         command.extend(["-c", f'model_reasoning_effort="{thinking_effort}"'])
     command.append("-")
     return command
@@ -1776,6 +1876,9 @@ class CodexHarness:
             with open(schema_path, "w", encoding="utf-8") as f:
                 json.dump(schema, f)
             _grant_job_temp_access(tmp, actual_env)
+            ollama_catalog = None
+            if normalize_model_provider(self.model_provider) == "ollama":
+                ollama_catalog = prepare_ollama_codex_catalog(tmp, model)
             cmd = codex_exec_command(
                 repo_dir=repo_dir,
                 model=model,
@@ -1787,6 +1890,7 @@ class CodexHarness:
                 allow_tools=allow_tools,
                 max_subagents=self.max_subagents if allow_tools else None,
                 fast_mode=self.fast_mode,
+                ollama_catalog_path=ollama_catalog,
             )
             if allow_tools:
                 cmd = _scan_docker_command(
@@ -1871,7 +1975,7 @@ class CodexHarness:
                     output_artifact=process_output,
                     provider=(
                         normalize_model_provider(self.model_provider)
-                        if normalize_model_provider(self.model_provider) in {"openrouter", "deepseek"}
+                        if normalize_model_provider(self.model_provider) in {"openrouter", "deepseek", "ollama"}
                         else None
                     ),
                 ) from payload_error
@@ -1912,9 +2016,17 @@ class CodexHarness:
         )
         if cli_model_provider == "deepseek":
             _append_deepseek_codex_config(cmd)
+        ollama_catalog = None
+        if normalize_model_provider(self.model_provider) == "ollama":
+            ollama_catalog = prepare_ollama_codex_catalog(os.path.dirname(output_path) or ".", model)
+            _append_ollama_codex_config(cmd, catalog_path=ollama_catalog)
         if cli_model_provider:
             cmd.extend(["-c", f"model_provider={json.dumps(cli_model_provider)}"])
-        if thinking_effort and thinking_effort != "default":
+        if (
+            thinking_effort
+            and thinking_effort != "default"
+            and normalize_model_provider(self.model_provider) != "ollama"
+        ):
             cmd.extend(["-c", f'model_reasoning_effort="{thinking_effort}"'])
         cmd.extend([session_id, "-"])
         cmd = _scan_docker_command(
@@ -1961,7 +2073,7 @@ class CodexHarness:
                 output_artifact=process_output,
                 provider=(
                     normalize_model_provider(self.model_provider)
-                    if normalize_model_provider(self.model_provider) in {"openrouter", "deepseek"}
+                    if normalize_model_provider(self.model_provider) in {"openrouter", "deepseek", "ollama"}
                     else None
                 ),
             ) from payload_error

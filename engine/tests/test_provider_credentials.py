@@ -112,8 +112,10 @@ def test_job_environment_only_includes_selected_provider_and_harness_credentials
         "OPENAI_API_KEY": "openai-secret",
         "ANTHROPIC_API_KEY": "anthropic-secret",
         "DEEPSEEK_API_KEY": "deepseek-secret",
+        "OLLAMA_API_KEY": "ollama",
         "OPENROUTER_API_KEY": "openrouter-secret",
         "XAI_API_KEY": "xai-secret",
+        "TYPESAFE_API_KEY": "typesafe-secret",
         "CURSOR_API_KEY": "cursor-secret",
         "GROK_BIN": "/usr/local/bin/grok",
     }
@@ -122,6 +124,7 @@ def test_job_environment_only_includes_selected_provider_and_harness_credentials
     openrouter_claude = job_environment("openrouter", "claude-code", source)
     openrouter_cursor = job_environment("openrouter", "cursor", source)
     deepseek_codex = job_environment("deepseek", "codex", source)
+    ollama_codex = job_environment("ollama", "codex", source)
     xai_grok = job_environment("xai", "grok-build", source)
 
     assert codex == {"PATH": "/bin", "OPENAI_API_KEY": "openai-secret", "CODEX_API_KEY": "openai-secret"}
@@ -132,11 +135,13 @@ def test_job_environment_only_includes_selected_provider_and_harness_credentials
         "CURSOR_API_KEY": "cursor-secret",
     }
     assert deepseek_codex == {"PATH": "/bin", "DEEPSEEK_API_KEY": "deepseek-secret"}
+    assert ollama_codex == {"PATH": "/bin", "OLLAMA_API_KEY": "ollama"}
     assert xai_grok == {
         "PATH": "/bin",
         "XAI_API_KEY": "xai-secret",
         "GROK_BIN": "/usr/local/bin/grok",
     }
-    for env in (codex, openrouter_claude, openrouter_cursor, deepseek_codex, xai_grok):
+    for env in (codex, openrouter_claude, openrouter_cursor, deepseek_codex, ollama_codex, xai_grok):
         assert "DATABASE_URL" not in env
+        assert "TYPESAFE_API_KEY" not in env
         assert "GITHUB_TOKEN" not in env

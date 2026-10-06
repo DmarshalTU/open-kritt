@@ -257,7 +257,7 @@ test('setup stores a selected secret without printing it', async (t) => {
   await runSetup({
     ...project,
     io,
-    prompter: answers({ ask: ['3', '1', '10'], secret: [secret] }),
+    prompter: answers({ ask: ['3', '1', '12'], secret: [secret] }),
   });
 
   assert.equal(parseEnv(await readFile(project.envFile, 'utf8')).CODEX_API_KEY, secret);
@@ -288,7 +288,7 @@ test('setup stores xAI in .env and the managed credential store', async (t) => {
   await runSetup({
     ...project,
     io,
-    prompter: answers({ ask: ['8', '1', '10'], secret: [secret] }),
+    prompter: answers({ ask: ['9', '1', '12'], secret: [secret] }),
   });
 
   const env = parseEnv(await readFile(project.envFile, 'utf8'));
@@ -309,7 +309,7 @@ test('setup stores OpenRouter in .env and the managed credential store', async (
   await runSetup({
     ...project,
     io,
-    prompter: answers({ ask: ['7', '1', '10'], secret: [secret] }),
+    prompter: answers({ ask: ['8', '1', '12'], secret: [secret] }),
   });
 
   const env = parseEnv(await readFile(project.envFile, 'utf8'));
@@ -330,7 +330,7 @@ test('setup stores DeepSeek in .env and the managed credential store', async (t)
   await runSetup({
     ...project,
     io,
-    prompter: answers({ ask: ['6', '1', '10'], secret: [secret] }),
+    prompter: answers({ ask: ['6', '1', '12'], secret: [secret] }),
   });
 
   const env = parseEnv(await readFile(project.envFile, 'utf8'));
@@ -399,7 +399,7 @@ test('guided Claude login uses the shared home monitored by Accounts', async (t)
   await runSetup({
     ...project,
     io,
-    prompter: answers({ ask: ['2', '1', '10'] }),
+    prompter: answers({ ask: ['2', '1', '12'] }),
     runner,
   });
 
@@ -432,7 +432,7 @@ test('setup explains the optional GitHub token', async (t) => {
   await runSetup({
     ...project,
     io,
-    prompter: answers({ ask: ['9', '3', '10'] }),
+    prompter: answers({ ask: ['11', '3', '12'] }),
   });
 
   assert.match(io.output.text, /private GitHub repositories/);
@@ -509,7 +509,7 @@ test('guided Docker login copies a host-owned auth file from an isolated contain
   await runSetup({
     ...project,
     io,
-    prompter: answers({ ask: ['1', '1', '10'] }),
+    prompter: answers({ ask: ['1', '1', '12'] }),
     runner,
   });
 

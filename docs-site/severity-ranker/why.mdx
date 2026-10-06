@@ -16,6 +16,11 @@ drown in noise.
 A ranker gives the model your rules for triage, so it can order findings by expected
 impact - the way an experienced bug-bounty triager would.
 
+When `TYPESAFE_API_KEY` is set, ranking calls [Jev](/ai-provider-setup/jev) instead of
+the scan model. Jev applies the same ranker text as decision instructions and records
+severity, an in-scope probability, and a reportable probability. It does not write the
+analysis or estimate a reward.
+
 ## How ranking fits in
 
 After the workflow finishes and findings are de-duplicated, the ranker runs over the

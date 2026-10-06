@@ -25,6 +25,9 @@ ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
 DEEPSEEK_MODELS_URL = "https://api.deepseek.com/models"
 DEEPSEEK_DEFAULT_MODEL_ID = "deepseek-flash"
 DEEPSEEK_THINKING_EFFORTS = ("low", "high", "max")
+OLLAMA_DEFAULT_BASE_URL = "http://host.docker.internal:11434/v1"
+OLLAMA_DEFAULT_MODEL_ID = "qwen2.5-coder:7b"
+OLLAMA_THINKING_EFFORTS = ("low",)
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models/user"
 OPENROUTER_DEFAULT_MODEL_ID = "z-ai/glm-5.2"
 XAI_MODELS_URL = "https://api.x.ai/v1/language-models"
@@ -546,6 +549,61 @@ def fetch_deepseek_models(api_key: str, timeout_seconds: float) -> tuple[list[di
     return models, default_model
 
 
+def _ollama_base_url(env: Mapping[str, str]) -> str:
+    raw = _clean_text(env.get("OLLAMA_BASE_URL")) or OLLAMA_DEFAULT_BASE_URL
+    if any(char in raw for char in ('"', "\\", "\n", "\r", " ", "\t")):
+        return OLLAMA_DEFAULT_BASE_URL
+    return raw.rstrip("/")
+
+
+def fetch_ollama_models(env: Mapping[str, str], timeout_seconds: float) -> tuple[list[dict[str, Any]], str]:
+    """List models installed in the local Ollama server."""
+
+    base_url = _ollama_base_url(env)
+    request = Request(
+        f"{base_url}/models",
+        headers={"Authorization": f"Bearer {_clean_text(env.get('OLLAMA_API_KEY')) or 'ollama'}"},
+    )
+    try:
+        with urlopen(request, timeout=max(1.0, timeout_seconds)) as response:  # noqa: S310 - local operator URL
+            raw_payload = response.read(MAX_HTTP_CATALOG_BYTES + 1)
+        if len(raw_payload) > MAX_HTTP_CATALOG_BYTES:
+            raise ModelCatalogError("Ollama model catalog response was too large")
+        payload = json.loads(raw_payload)
+    except (HTTPError, URLError, OSError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ModelCatalogError("Could not read the Ollama model catalog") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        raise ModelCatalogError("Ollama model catalog response was invalid")
+
+    entries: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for raw in payload["data"]:
+        if not isinstance(raw, Mapping):
+            continue
+        model_id = _clean_text(raw.get("id"))
+        if not model_id or model_id in seen_ids:
+            continue
+        seen_ids.add(model_id)
+        entries.append(
+            {
+                "model": model_id,
+                "displayName": model_id,
+                "supportedReasoningEfforts": list(OLLAMA_THINKING_EFFORTS),
+                "isDefault": model_id == OLLAMA_DEFAULT_MODEL_ID,
+            }
+        )
+        if len(entries) >= MAX_CATALOG_MODELS:
+            break
+
+    if entries and not any(entry["isDefault"] for entry in entries):
+        entries[0]["isDefault"] = True
+
+    models, default_model = normalize_catalog_models(entries)
+    if not models:
+        raise ModelCatalogError("Ollama model catalog was empty")
+    return models, default_model
+
+
 def fetch_xai_models(api_key: str, timeout_seconds: float) -> tuple[list[dict[str, Any]], str]:
     """List models available under the configured xAI API key."""
 
@@ -618,6 +676,7 @@ class ModelCatalogRefresher:
         fetch_codex: CatalogFetcher | None = None,
         fetch_anthropic: CatalogFetcher | None = None,
         fetch_deepseek: CatalogFetcher | None = None,
+        fetch_ollama: CatalogFetcher | None = None,
         fetch_openrouter: CatalogFetcher | None = None,
         fetch_xai: CatalogFetcher | None = None,
         codex_cli_gate: Any | None = None,
@@ -628,6 +687,7 @@ class ModelCatalogRefresher:
         self.fetch_codex = fetch_codex
         self.fetch_anthropic = fetch_anthropic
         self.fetch_deepseek = fetch_deepseek
+        self.fetch_ollama = fetch_ollama
         self.fetch_openrouter = fetch_openrouter
         self.fetch_xai = fetch_xai
         self.codex_cli_gate = codex_cli_gate
@@ -656,6 +716,9 @@ class ModelCatalogRefresher:
                 lambda: fetch_deepseek_models(env["DEEPSEEK_API_KEY"], self.timeout_seconds)
             )
             outcomes["deepseek"] = self._refresh_provider("deepseek", fetch_deepseek)
+        if _clean_text(env.get("OLLAMA_API_KEY")):
+            fetch_ollama = self.fetch_ollama or (lambda: fetch_ollama_models(env, self.timeout_seconds))
+            outcomes["ollama"] = self._refresh_provider("ollama", fetch_ollama)
         if _clean_text(env.get("OPENROUTER_API_KEY")):
             fetch_openrouter = self.fetch_openrouter or (
                 lambda: fetch_openrouter_models(env["OPENROUTER_API_KEY"], self.timeout_seconds)

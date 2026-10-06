@@ -426,7 +426,8 @@ def test_ranker_prompt_keeps_a_safe_fallback_for_legacy_scans_without_rules():
     assert "Target findings JSON" in prompt
 
 
-def test_ranker_batch_sends_the_configured_severity_rules_to_the_harness():
+def test_ranker_batch_sends_the_configured_severity_rules_to_the_harness(monkeypatch):
+    monkeypatch.setattr("open_kritt_engine.post_processing.jev_api_key", lambda: "")
     configured_rules = "Rank public consensus-halting bugs above authenticated denial of service."
     current = {
         **scan(),

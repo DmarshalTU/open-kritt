@@ -1,65 +1,94 @@
-import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { randomUUID } from "node:crypto";
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
-import { PROJECT_ENV_FILE_PATH, updateEnvironmentFile } from './environmentFile.js';
-import { providerLoginIsConfigured } from './providerLogins.js';
+import {
+  PROJECT_ENV_FILE_PATH,
+  updateEnvironmentFile,
+} from "./environmentFile.js";
+import { providerLoginIsConfigured } from "./providerLogins.js";
 
 export const PROVIDER_CREDENTIALS_PATH =
-  process.env.OPEN_KRITT_PROVIDER_CREDENTIALS_PATH || '/credentials/providers.json';
+  process.env.OPEN_KRITT_PROVIDER_CREDENTIALS_PATH ||
+  "/credentials/providers.json";
 
 export const PROVIDER_DEFINITIONS = {
   codex: {
-    label: 'Codex',
-    envKeys: ['CODEX_API_KEY', 'OPENAI_API_KEY'],
-    credentialLabel: 'Codex login',
-    description: 'ChatGPT subscription account authenticated through Codex device login.',
-    management: 'login',
+    label: "Codex",
+    envKeys: ["CODEX_API_KEY", "OPENAI_API_KEY"],
+    credentialLabel: "Codex login",
+    description:
+      "ChatGPT subscription account authenticated through Codex device login.",
+    management: "login",
   },
   claude: {
-    label: 'Claude',
-    envKeys: ['ANTHROPIC_API_KEY'],
-    credentialLabel: 'Claude login',
-    description: 'Claude subscription accounts authenticated through Claude Code.',
-    management: 'login',
+    label: "Claude",
+    envKeys: ["ANTHROPIC_API_KEY"],
+    credentialLabel: "Claude login",
+    description:
+      "Claude subscription accounts authenticated through Claude Code.",
+    management: "login",
   },
   openrouter: {
-    label: 'OpenRouter',
-    envKeys: ['OPENROUTER_API_KEY'],
-    credentialLabel: 'OpenRouter API key',
-    description: 'OpenRouter-compatible models through a project API key.',
-    management: 'api_key',
+    label: "OpenRouter",
+    envKeys: ["OPENROUTER_API_KEY"],
+    credentialLabel: "OpenRouter API key",
+    description: "OpenRouter-compatible models through a project API key.",
+    management: "api_key",
   },
   xai: {
-    label: 'xAI',
-    envKeys: ['XAI_API_KEY'],
-    credentialLabel: 'xAI API key',
-    description: 'Grok Build through an xAI device login or API key.',
-    management: 'login',
+    label: "xAI",
+    envKeys: ["XAI_API_KEY"],
+    credentialLabel: "xAI API key",
+    description: "Grok Build through an xAI device login or API key.",
+    management: "login",
   },
   deepseek: {
-    label: 'DeepSeek',
-    envKeys: ['DEEPSEEK_API_KEY'],
-    credentialLabel: 'DeepSeek API key',
-    description: 'DeepSeek models through the Codex harness, with model discovery and API checks.',
-    management: 'api_key',
+    label: "DeepSeek",
+    envKeys: ["DEEPSEEK_API_KEY"],
+    credentialLabel: "DeepSeek API key",
+    description:
+      "DeepSeek models through the Codex harness, with model discovery and API checks.",
+    management: "api_key",
+  },
+  ollama: {
+    label: "Local",
+    envKeys: ["OLLAMA_API_KEY"],
+    credentialLabel: "Local server token",
+    description:
+      "Models served by Ollama on this machine, through the Codex harness. The token is not a secret.",
+    management: "api_key",
+  },
+  jev: {
+    label: "Jev",
+    envKeys: ["TYPESAFE_API_KEY"],
+    credentialLabel: "TypeSafe API key",
+    description:
+      "Scores findings for severity, scope, and whether they look reportable. Jev does not run scans or write workflows.",
+    management: "api_key",
   },
 };
 
-const MANAGED_CREDENTIAL_PROVIDERS = new Set(['openrouter', 'xai', 'deepseek']);
+const MANAGED_CREDENTIAL_PROVIDERS = new Set([
+  "openrouter",
+  "xai",
+  "deepseek",
+  "ollama",
+  "jev",
+]);
 
 const MAX_CREDENTIAL_LENGTH = 16 * 1024;
 let writeQueue = Promise.resolve();
 
 function hasValue(value) {
-  return typeof value === 'string' ? value.trim().length > 0 : Boolean(value);
+  return typeof value === "string" ? value.trim().length > 0 : Boolean(value);
 }
 
 function hasConfiguredFlag(value) {
   if (value === true) return true;
-  if (typeof value !== 'string') return false;
-  return ['1', 'true', 'yes'].includes(value.trim().toLowerCase());
+  if (typeof value !== "string") return false;
+  return ["1", "true", "yes"].includes(value.trim().toLowerCase());
 }
 
 function emptyStore() {
@@ -67,39 +96,55 @@ function emptyStore() {
 }
 
 function normalizeStore(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return emptyStore();
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return emptyStore();
   const source = value.credentials;
   const credentials = {};
-  if (source && typeof source === 'object' && !Array.isArray(source)) {
+  if (source && typeof source === "object" && !Array.isArray(source)) {
     for (const provider of MANAGED_CREDENTIAL_PROVIDERS) {
-      if (hasValue(source[provider])) credentials[provider] = String(source[provider]);
+      if (hasValue(source[provider]))
+        credentials[provider] = String(source[provider]);
     }
   }
-  const disabledEnvironmentProviders = Array.isArray(value.disabledEnvironmentProviders)
-    ? [...new Set(value.disabledEnvironmentProviders.filter((provider) => MANAGED_CREDENTIAL_PROVIDERS.has(provider)))]
+  const disabledEnvironmentProviders = Array.isArray(
+    value.disabledEnvironmentProviders,
+  )
+    ? [
+        ...new Set(
+          value.disabledEnvironmentProviders.filter((provider) =>
+            MANAGED_CREDENTIAL_PROVIDERS.has(provider),
+          ),
+        ),
+      ]
     : [];
   return { version: 1, credentials, disabledEnvironmentProviders };
 }
 
-export function readManagedCredentialStateSync(credentialsPath = PROVIDER_CREDENTIALS_PATH) {
+export function readManagedCredentialStateSync(
+  credentialsPath = PROVIDER_CREDENTIALS_PATH,
+) {
   try {
-    return normalizeStore(JSON.parse(readFileSync(credentialsPath, 'utf8')));
+    return normalizeStore(JSON.parse(readFileSync(credentialsPath, "utf8")));
   } catch {
     return emptyStore();
   }
 }
 
-export function readManagedCredentialsSync(credentialsPath = PROVIDER_CREDENTIALS_PATH) {
+export function readManagedCredentialsSync(
+  credentialsPath = PROVIDER_CREDENTIALS_PATH,
+) {
   return readManagedCredentialStateSync(credentialsPath).credentials;
 }
 
 async function readStore(credentialsPath) {
   try {
-    return normalizeStore(JSON.parse(await readFile(credentialsPath, 'utf8')));
+    return normalizeStore(JSON.parse(await readFile(credentialsPath, "utf8")));
   } catch (error) {
-    if (error?.code === 'ENOENT') return emptyStore();
+    if (error?.code === "ENOENT") return emptyStore();
     if (error instanceof SyntaxError) {
-      throw new Error('The managed provider credential file is invalid JSON.', { cause: error });
+      throw new Error("The managed provider credential file is invalid JSON.", {
+        cause: error,
+      });
     }
     throw error;
   }
@@ -107,8 +152,14 @@ async function readStore(credentialsPath) {
 
 async function writeStore(credentialsPath, store) {
   await mkdir(dirname(credentialsPath), { recursive: true, mode: 0o700 });
-  const tempPath = join(dirname(credentialsPath), `.providers.${process.pid}.${randomUUID()}.tmp`);
-  await writeFile(tempPath, `${JSON.stringify(store, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  const tempPath = join(
+    dirname(credentialsPath),
+    `.providers.${process.pid}.${randomUUID()}.tmp`,
+  );
+  await writeFile(tempPath, `${JSON.stringify(store, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   await rename(tempPath, credentialsPath);
   await chmod(credentialsPath, 0o600);
 }
@@ -121,13 +172,19 @@ function queuedWrite(operation) {
 
 export function validateProviderCredential(provider, credential) {
   if (!MANAGED_CREDENTIAL_PROVIDERS.has(provider)) {
-    return { field: 'provider', message: 'This provider does not use a managed API key in Accounts.' };
+    return {
+      field: "provider",
+      message: "This provider does not use a managed API key in Accounts.",
+    };
   }
-  if (typeof credential !== 'string' || !credential.trim()) {
-    return { field: 'credential', message: 'Enter an API key.' };
+  if (typeof credential !== "string" || !credential.trim()) {
+    return { field: "credential", message: "Enter an API key." };
   }
   if (credential.length > MAX_CREDENTIAL_LENGTH || /[\r\n]/.test(credential)) {
-    return { field: 'credential', message: 'The API key must be a single line under 16 KB.' };
+    return {
+      field: "credential",
+      message: "The API key must be a single line under 16 KB.",
+    };
   }
   return null;
 }
@@ -135,7 +192,10 @@ export function validateProviderCredential(provider, credential) {
 export async function saveManagedProviderCredential(
   provider,
   credential,
-  { credentialsPath = PROVIDER_CREDENTIALS_PATH, environmentFilePath = PROJECT_ENV_FILE_PATH } = {}
+  {
+    credentialsPath = PROVIDER_CREDENTIALS_PATH,
+    environmentFilePath = PROJECT_ENV_FILE_PATH,
+  } = {},
 ) {
   const validationError = validateProviderCredential(provider, credential);
   if (validationError) {
@@ -152,14 +212,15 @@ export async function saveManagedProviderCredential(
       disabledEnvironmentProviders: [...store.disabledEnvironmentProviders],
     };
     store.credentials[provider] = credential.trim();
-    store.disabledEnvironmentProviders = store.disabledEnvironmentProviders.filter(
-      (candidate) => candidate !== provider
-    );
+    store.disabledEnvironmentProviders =
+      store.disabledEnvironmentProviders.filter(
+        (candidate) => candidate !== provider,
+      );
     await writeStore(credentialsPath, store);
     try {
       await updateEnvironmentFile(
         { [PROVIDER_DEFINITIONS[provider].envKeys[0]]: credential.trim() },
-        { environmentFilePath }
+        { environmentFilePath },
       );
     } catch (error) {
       await writeStore(credentialsPath, previousStore);
@@ -174,7 +235,7 @@ export async function removeManagedProviderCredential(
     credentialsPath = PROVIDER_CREDENTIALS_PATH,
     disableEnvironment = false,
     environmentFilePath = PROJECT_ENV_FILE_PATH,
-  } = {}
+  } = {},
 ) {
   if (!MANAGED_CREDENTIAL_PROVIDERS.has(provider)) return false;
   return queuedWrite(async () => {
@@ -187,10 +248,14 @@ export async function removeManagedProviderCredential(
     const existed = Object.hasOwn(store.credentials, provider);
     delete store.credentials[provider];
     const wasDisabled = store.disabledEnvironmentProviders.includes(provider);
-    if (disableEnvironment && !wasDisabled) store.disabledEnvironmentProviders.push(provider);
+    if (disableEnvironment && !wasDisabled)
+      store.disabledEnvironmentProviders.push(provider);
     await writeStore(credentialsPath, store);
     try {
-      await updateEnvironmentFile({ [PROVIDER_DEFINITIONS[provider].envKeys[0]]: '' }, { environmentFilePath });
+      await updateEnvironmentFile(
+        { [PROVIDER_DEFINITIONS[provider].envKeys[0]]: "" },
+        { environmentFilePath },
+      );
     } catch (error) {
       await writeStore(credentialsPath, previousStore);
       throw error;
@@ -206,20 +271,26 @@ export function providerCredentialStatuses({
 } = {}) {
   const store = readManagedCredentialStateSync(credentialsPath);
   const managed = store.credentials;
-  const disabledEnvironmentProviders = new Set(store.disabledEnvironmentProviders);
+  const disabledEnvironmentProviders = new Set(
+    store.disabledEnvironmentProviders,
+  );
   return Object.entries(PROVIDER_DEFINITIONS).map(([id, definition]) => {
     const managedCredential = hasValue(managed[id]);
     const environmentCredential =
       !disabledEnvironmentProviders.has(id) &&
-      definition.envKeys.some((key) => hasValue(env[key]) || hasConfiguredFlag(env[`OPEN_KRITT_${key}_CONFIGURED`]));
+      definition.envKeys.some(
+        (key) =>
+          hasValue(env[key]) ||
+          hasConfiguredFlag(env[`OPEN_KRITT_${key}_CONFIGURED`]),
+      );
     const savedLogin = providerLoginIsConfigured(id, { env, ...loginOptions });
     const configured = managedCredential || environmentCredential || savedLogin;
     const source = managedCredential
-      ? 'managed_api_key'
+      ? "managed_api_key"
       : savedLogin
         ? `${id}_login`
         : environmentCredential
-          ? 'environment'
+          ? "environment"
           : null;
     return {
       id,
@@ -231,10 +302,14 @@ export function providerCredentialStatuses({
       apiKeyConfigured: managedCredential || environmentCredential,
       apiKeyPath: definition.envKeys[0],
       source,
-      canManage: definition.management === 'login' || definition.management === 'api_key',
+      canManage:
+        definition.management === "login" ||
+        definition.management === "api_key",
       // xAI keeps OpenRouter-style managed API keys alongside device login.
       canManageKey: MANAGED_CREDENTIAL_PROVIDERS.has(id),
-      canRemove: MANAGED_CREDENTIAL_PROVIDERS.has(id) && (managedCredential || environmentCredential),
+      canRemove:
+        MANAGED_CREDENTIAL_PROVIDERS.has(id) &&
+        (managedCredential || environmentCredential),
       managed: managedCredential,
     };
   });

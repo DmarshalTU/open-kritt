@@ -685,6 +685,32 @@ def test_deepseek_codex_command_uses_fixed_provider_without_search_or_secret():
     assert not any("secret" in value for value in command)
 
 
+def test_ollama_codex_command_uses_local_provider_without_search_or_reasoning_effort(monkeypatch):
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1")
+    command = codex_exec_command(
+        repo_dir="/tmp/repo",
+        model="qwen2.5-coder:7b",
+        schema_path="/tmp/schema.json",
+        output_path="/tmp/output.json",
+        model_provider="ollama",
+        thinking_effort="high",
+        allow_tools=True,
+        ollama_catalog_path="/tmp/ollama_models.json",
+    )
+    configs = [command[index + 1] for index, value in enumerate(command) if value == "-c"]
+
+    assert "--search" not in command
+    assert 'model_provider="kritt-local"' in configs
+    assert 'model_providers.kritt-local.name="Ollama"' in configs
+    assert 'model_providers.kritt-local.base_url="http://host.docker.internal:11434/v1"' in configs
+    assert 'model_providers.kritt-local.env_key="OLLAMA_API_KEY"' in configs
+    assert 'model_providers.kritt-local.wire_api="responses"' in configs
+    assert 'model_catalog_json="/tmp/ollama_models.json"' in configs
+    assert 'web_search="disabled"' in configs
+    assert not any(value.startswith("model_reasoning_effort=") for value in configs)
+    assert command[command.index("-m") + 1] == "qwen2.5-coder:7b"
+
+
 def test_tool_free_claude_command_has_no_default_tools(monkeypatch):
     commands = []
 

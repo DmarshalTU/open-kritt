@@ -57,7 +57,10 @@ def test_default_mixed_all_inactive_and_reactivated_pools(provider, activity, mo
     assert workspace.provider_home_for_job(provider, 1) == homes[0]
 
 
-@pytest.mark.parametrize("provider,keys", API_ACCOUNT_KEYS.items())
+@pytest.mark.parametrize(
+    "provider,keys",
+    [(provider, keys) for provider, keys in API_ACCOUNT_KEYS.items() if provider != "jev"],
+)
 def test_disabled_keys_do_not_reach_jobs_or_retries(provider, keys, activity, tmp_path):
     source = {"OPEN_KRITT_PROVIDER_CREDENTIALS_PATH": str(tmp_path / "providers.json")}
     source.update(dict.fromkeys(keys, "synthetic-key"))
@@ -119,7 +122,7 @@ def test_corrupt_preferences_fail_closed(activity, tmp_path):
 
 @pytest.mark.parametrize(
     "provider,harness",
-    [("codex", "codex"), ("claude", "claude-code"), ("xai", "grok-build"), ("deepseek", "codex")],
+    [("codex", "codex"), ("claude", "claude-code"), ("xai", "grok-build"), ("deepseek", "codex"), ("ollama", "codex")],
 )
 def test_key_only_workspace_never_copies_an_inactive_login(provider, harness, activity, monkeypatch, tmp_path):
     monkeypatch.setattr(workspace, "_configured_provider_homes", lambda *args, **kwargs: ["/sample/disabled"])

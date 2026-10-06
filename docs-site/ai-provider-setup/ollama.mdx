@@ -1,0 +1,35 @@
+---
+title: 'Local Ollama'
+description: 'Run scans against a model served by Ollama on this machine.'
+---
+
+The **Local** provider uses a token that is not a secret and runs through the
+**Codex** harness. Ollama ignores the token. Set `OLLAMA_API_KEY=ollama` to show
+the provider, and set `OLLAMA_BASE_URL` to the server the engine container can
+reach. On Docker Desktop that address is `http://host.docker.internal:11434/v1`.
+
+1. Install [Ollama](https://ollama.com) on the same machine as Docker, not inside a container.
+2. Let it listen beyond localhost so scan containers can reach it, for example
+   `OLLAMA_HOST=0.0.0.0:11434`, then restart Ollama.
+3. Pull a model that fits the GPU. A 12 GB card fits `qwen2.5-coder:7b`.
+4. Put the token and base URL in `.env`, then start the stack again.
+5. Create a scan, choose **Local**, then select one of the models Ollama reports.
+
+The engine refreshes the model list from `GET /v1/models`. An empty token hides
+the provider. A listed model is one Ollama has installed, not a promise that a
+long scan prompt will fit in GPU memory.
+
+## What a local job can and cannot do
+
+Scan jobs keep their private network. A Local job is the exception: it may open
+the Ollama port on this machine. It still does not receive the Docker socket,
+database, or project `.env`.
+
+Codex speaks the Responses API. Ollama's Responses endpoint does not resume an
+earlier response, so a job that has to continue a previous turn can fail. Web
+search is disabled for this provider. A 7B model will not match a hosted frontier
+model, and a large workflow prompt can exceed the context that fits in 12 GB.
+Keep the number of model jobs small.
+
+The default context advertised to Codex is 32,768 tokens. The Ollama process
+may use a smaller context unless `OLLAMA_CONTEXT_LENGTH` is raised.

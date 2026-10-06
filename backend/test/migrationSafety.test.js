@@ -1,23 +1,49 @@
-import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { test } from 'node:test';
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { test } from "node:test";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const migrationDir = path.resolve(here, '../../database/init');
+const migrationDir = path.resolve(here, "../../database/init");
 
-test('database init migrations do not drop columns or tables', () => {
-  for (const filename of fs.readdirSync(migrationDir).filter((name) => name.endsWith('.sql'))) {
-    const sql = fs.readFileSync(path.join(migrationDir, filename), 'utf8');
-    assert.doesNotMatch(sql, /\bDROP\s+(?:COLUMN|TABLE)\b/i, `${filename} must remain forward-only`);
+test("database init migrations do not drop columns or tables", () => {
+  for (const filename of fs
+    .readdirSync(migrationDir)
+    .filter((name) => name.endsWith(".sql"))) {
+    const sql = fs.readFileSync(path.join(migrationDir, filename), "utf8");
+    assert.doesNotMatch(
+      sql,
+      /\bDROP\s+(?:COLUMN|TABLE)\b/i,
+      `${filename} must remain forward-only`,
+    );
   }
 });
 
-test('DeepSeek generation storage permits only the Codex harness', () => {
-  const sql = fs.readFileSync(path.join(migrationDir, '033_generations_deepseek_codex.sql'), 'utf8');
+test("DeepSeek generation storage permits only the Codex harness", () => {
+  const sql = fs.readFileSync(
+    path.join(migrationDir, "033_generations_deepseek_codex.sql"),
+    "utf8",
+  );
 
   assert.match(sql, /model_provider IN \([^)]*'deepseek'[^)]*\)/);
   assert.match(sql, /model_provider = 'deepseek' AND harness = 'codex'/);
-  assert.doesNotMatch(sql, /model_provider = 'deepseek' AND harness = '(?:claude-code|grok-build)'/);
+  assert.doesNotMatch(
+    sql,
+    /model_provider = 'deepseek' AND harness = '(?:claude-code|grok-build)'/,
+  );
+});
+
+test("ollama generation migration keeps the provider on the codex harness", () => {
+  const sql = fs.readFileSync(
+    path.join(migrationDir, "034_generations_ollama_codex.sql"),
+    "utf8",
+  );
+  assert.match(sql, /IF NOT EXISTS|DROP CONSTRAINT IF EXISTS/);
+  assert.match(sql, /model_provider IN \([^)]*'ollama'[^)]*\)/);
+  assert.match(sql, /model_provider = 'ollama' AND harness = 'codex'/);
+  assert.doesNotMatch(
+    sql,
+    /model_provider = 'ollama' AND harness = '(?:claude-code|grok-build)'/,
+  );
 });

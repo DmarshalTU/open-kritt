@@ -1,32 +1,35 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api } from '../api/client.js';
-import Pagination from '../components/Pagination.jsx';
-import ProviderVisibility, { useProviderVisibility } from '../components/ProviderVisibility.jsx';
-import DeepSeekApiCheck from '../components/DeepSeekApiCheck.jsx';
-import { PROVIDER_LABELS } from '../lib/providerVisibility.js';
-import { Button, ErrorState, Spinner } from '../components/ui.jsx';
-import { usePageChrome } from '../context/ui.jsx';
-import { usePagination } from '../lib/usePagination.js';
+import { api } from "../api/client.js";
+import Pagination from "../components/Pagination.jsx";
+import ProviderVisibility, {
+  useProviderVisibility,
+} from "../components/ProviderVisibility.jsx";
+import DeepSeekApiCheck from "../components/DeepSeekApiCheck.jsx";
+import { PROVIDER_LABELS } from "../lib/providerVisibility.js";
+import { Button, ErrorState, Spinner } from "../components/ui.jsx";
+import { usePageChrome } from "../context/ui.jsx";
+import { usePagination } from "../lib/usePagination.js";
 
 const PROVIDER_LINKS = {
-  openrouter: 'https://openrouter.ai/settings/keys',
-  xai: 'https://console.x.ai/',
-  deepseek: 'https://platform.deepseek.com/api_keys',
+  openrouter: "https://openrouter.ai/settings/keys",
+  xai: "https://console.x.ai/",
+  deepseek: "https://platform.deepseek.com/api_keys",
+  jev: "https://console.typesafe.ai/keys",
 };
 
 const WEEKLY_WINDOW_MINUTES = 7 * 24 * 60;
 const RESET_ALIGNMENT_TOLERANCE_MS = 5000;
 
 const SOURCE_LABELS = {
-  managed_api_key: 'Managed in open·kritt',
-  codex_login: 'Codex login',
-  claude_login: 'Claude login',
-  xai_login: 'xAI login',
-  environment: 'Environment configuration',
+  managed_api_key: "Managed in open·kritt",
+  codex_login: "Codex login",
+  claude_login: "Claude login",
+  xai_login: "xAI login",
+  environment: "Environment configuration",
 };
 
-const LOGIN_PROVIDERS = new Set(['codex', 'claude', 'xai']);
+const LOGIN_PROVIDERS = new Set(["codex", "claude", "xai"]);
 
 export default function Accounts() {
   const { visible } = useProviderVisibility();
@@ -66,13 +69,17 @@ export default function Accounts() {
             if (sequence !== loadSequence.current) return;
             setData((current) => replaceAccountProvider(current, provider));
             if (provider.loadError) {
-              setProviderErrors((current) => ({ ...current, [providerId]: provider.loadError }));
+              setProviderErrors((current) => ({
+                ...current,
+                [providerId]: provider.loadError,
+              }));
             }
           } catch (nextError) {
             if (sequence !== loadSequence.current) return;
             setProviderErrors((current) => ({
               ...current,
-              [providerId]: nextError.message || `Could not load ${providerId} accounts.`,
+              [providerId]:
+                nextError.message || `Could not load ${providerId} accounts.`,
             }));
           } finally {
             if (sequence === loadSequence.current) {
@@ -83,7 +90,7 @@ export default function Accounts() {
               });
             }
           }
-        })
+        }),
       );
     } catch (nextError) {
       if (sequence !== loadSequence.current) return;
@@ -103,9 +110,12 @@ export default function Accounts() {
   }, [load]);
 
   usePageChrome(
-    [{ label: 'Accounts', active: true }],
-    { label: refreshing ? 'Refreshing…' : 'Refresh accounts', onClick: () => load(true) },
-    [refreshing, load]
+    [{ label: "Accounts", active: true }],
+    {
+      label: refreshing ? "Refreshing…" : "Refresh accounts",
+      onClick: () => load(true),
+    },
+    [refreshing, load],
   );
 
   const toggleActive = async (provider, account) => {
@@ -115,7 +125,11 @@ export default function Accounts() {
     ++loadSequence.current;
     setError(null);
     try {
-      const saved = await api.setAccountActive(provider.id, account.activityId, !account.active);
+      const saved = await api.setAccountActive(
+        provider.id,
+        account.activityId,
+        !account.active,
+      );
       setData((current) => applyAccountActivity(current, provider.id, saved));
     } catch (nextError) {
       setError(nextError);
@@ -134,7 +148,10 @@ export default function Accounts() {
   };
 
   const remove = async (provider) => {
-    if (!window.confirm(`Remove the ${provider.label} API key from open·kritt?`)) return;
+    if (
+      !window.confirm(`Remove the ${provider.label} API key from open·kritt?`)
+    )
+      return;
     const previous = data;
     setData(removeProviderFromOverview(data, provider.id));
     try {
@@ -148,7 +165,12 @@ export default function Accounts() {
 
   const removeLoginAccount = async (provider, account) => {
     const label = account.email || account.label;
-    const providerName = provider.id === 'codex' ? 'Codex' : provider.id === 'xai' ? 'xAI' : 'Claude';
+    const providerName =
+      provider.id === "codex"
+        ? "Codex"
+        : provider.id === "xai"
+          ? "xAI"
+          : "Claude";
     const impact = `This signs ${providerName} out locally and removes its managed account home when applicable. Existing scans and results are kept.`;
     if (!window.confirm(`Remove ${label}?\n\n${impact}`)) return;
     const key = `${provider.id}:${account.id}`;
@@ -168,43 +190,79 @@ export default function Accounts() {
 
   const startWeeklyUsage = async (account) => {
     setError(null);
-    setStartingUsage((current) => updatePendingAccounts(current, account.id, true));
+    setStartingUsage((current) =>
+      updatePendingAccounts(current, account.id, true),
+    );
     try {
-      await startCodexWeeklyUsageUntilStarted(account.id, api.startCodexWeeklyUsage, setData);
+      await startCodexWeeklyUsageUntilStarted(
+        account.id,
+        api.startCodexWeeklyUsage,
+        setData,
+      );
     } catch (nextError) {
       setError(nextError);
     } finally {
-      setStartingUsage((current) => updatePendingAccounts(current, account.id, false));
+      setStartingUsage((current) =>
+        updatePendingAccounts(current, account.id, false),
+      );
     }
   };
 
   const useManualReset = async (account) => {
-    const available = finiteNumber(account?.rateLimits?.manualResetCredits?.availableCount);
+    const available = finiteNumber(
+      account?.rateLimits?.manualResetCredits?.availableCount,
+    );
     const label = account.email || account.label;
-    if (!window.confirm(`Use 1 of ${available} manual resets for ${label}?\n\nThis cannot be undone.`)) return;
+    if (
+      !window.confirm(
+        `Use 1 of ${available} manual resets for ${label}?\n\nThis cannot be undone.`,
+      )
+    )
+      return;
     setError(null);
-    setResettingUsage((current) => updatePendingAccounts(current, account.id, true));
+    setResettingUsage((current) =>
+      updatePendingAccounts(current, account.id, true),
+    );
     try {
       setData(await api.useCodexManualReset(account.id));
     } catch (nextError) {
       setError(nextError);
     } finally {
-      setResettingUsage((current) => updatePendingAccounts(current, account.id, false));
+      setResettingUsage((current) =>
+        updatePendingAccounts(current, account.id, false),
+      );
     }
   };
 
   return (
-    <div className="accounts-page" style={{ padding: '30px 32px 56px', maxWidth: 1240 }}>
+    <div
+      className="accounts-page"
+      style={{ padding: "30px 32px 56px", maxWidth: 1240 }}
+    >
       <div className="accounts-heading">
         <div>
-          <div style={{ fontSize: 27, fontWeight: 600, letterSpacing: '-0.02em' }}>Accounts</div>
-          <div style={{ color: 'var(--text-2)', marginTop: 7, maxWidth: 680, lineHeight: 1.5 }}>
-            Manage provider logins and API keys. Show additional providers below to configure them. Secret values are
-            never returned by the API.
+          <div
+            style={{ fontSize: 27, fontWeight: 600, letterSpacing: "-0.02em" }}
+          >
+            Accounts
+          </div>
+          <div
+            style={{
+              color: "var(--text-2)",
+              marginTop: 7,
+              maxWidth: 680,
+              lineHeight: 1.5,
+            }}
+          >
+            Manage provider logins and API keys. Show additional providers below
+            to configure them. Secret values are never returned by the API.
           </div>
         </div>
         {data && (
-          <div className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>
+          <div
+            className="mono"
+            style={{ color: "var(--text-3)", fontSize: 11 }}
+          >
             Updated {formatDate(data.generatedAt)}
           </div>
         )}
@@ -216,8 +274,15 @@ export default function Accounts() {
       {data && (
         <>
           <div className="account-summary-grid">
-            <Summary label="Configured providers" value={`${data.configuredProviders}/${data.providerCount}`} />
-            <Summary label="Active accounts" value={data.active} color="var(--ok)" />
+            <Summary
+              label="Configured providers"
+              value={`${data.configuredProviders}/${data.providerCount}`}
+            />
+            <Summary
+              label="Active accounts"
+              value={data.active}
+              color="var(--ok)"
+            />
             <Summary label="Accounts observed" value={data.total} />
           </div>
 
@@ -236,10 +301,14 @@ export default function Accounts() {
                   credentialRevision={credentialRevision}
                   onEdit={() => setEditing(provider)}
                   onEditKey={
-                    provider.management === 'login' && provider.canManageKey ? () => setEditingKey(provider) : null
+                    provider.management === "login" && provider.canManageKey
+                      ? () => setEditingKey(provider)
+                      : null
                   }
                   onRemove={() => remove(provider)}
-                  onRemoveAccount={(account) => removeLoginAccount(provider, account)}
+                  onRemoveAccount={(account) =>
+                    removeLoginAccount(provider, account)
+                  }
                   onStartWeeklyUsage={startWeeklyUsage}
                   onUseManualReset={useManualReset}
                   onToggleActive={(account) => toggleActive(provider, account)}
@@ -262,10 +331,14 @@ export default function Accounts() {
         </>
       )}
 
-      {editing?.management === 'login' && (
-        <LoginDialog provider={editing} onClose={() => setEditing(null)} onComplete={() => load(true)} />
+      {editing?.management === "login" && (
+        <LoginDialog
+          provider={editing}
+          onClose={() => setEditing(null)}
+          onComplete={() => load(true)}
+        />
       )}
-      {(editing?.management === 'api_key' || editingKey) && (
+      {(editing?.management === "api_key" || editingKey) && (
         <CredentialDialog
           provider={editingKey || editing}
           onClose={() => {
@@ -279,11 +352,13 @@ export default function Accounts() {
   );
 }
 
-function Summary({ label, value, color = 'var(--text)' }) {
+function Summary({ label, value, color = "var(--text)" }) {
   return (
     <div className="account-summary-card">
       <div className="mono account-kicker">{label}</div>
-      <div style={{ fontSize: 28, fontWeight: 600, marginTop: 8, color }}>{value}</div>
+      <div style={{ fontSize: 28, fontWeight: 600, marginTop: 8, color }}>
+        {value}
+      </div>
     </div>
   );
 }
@@ -305,46 +380,71 @@ export function ProviderCard({
   onToggleActive,
   updatingActive,
 }) {
-  const accountPages = usePagination(provider.accounts || [], { pageSize: 5, resetKey: provider.id });
+  const accountPages = usePagination(provider.accounts || [], {
+    pageSize: 5,
+    resetKey: provider.id,
+  });
   const ready =
-    provider.configured && provider.accounts.some((account) => account.active && (account.available ?? account.active));
+    provider.configured &&
+    provider.accounts.some(
+      (account) => account.active && (account.available ?? account.active),
+    );
   const signInRequired =
-    LOGIN_PROVIDERS.has(provider.id) && provider.accounts.some((account) => account.statusKind === 'expired');
+    LOGIN_PROVIDERS.has(provider.id) &&
+    provider.accounts.some((account) => account.statusKind === "expired");
   const status = loading
-    ? 'Loading'
+    ? "Loading"
     : loadError
-      ? 'Unavailable'
-      : provider.configured && provider.active === 0 && provider.accounts.length > 0
-        ? 'Inactive'
+      ? "Unavailable"
+      : provider.configured &&
+          provider.active === 0 &&
+          provider.accounts.length > 0
+        ? "Inactive"
         : signInRequired
-          ? 'Sign-in required'
+          ? "Sign-in required"
           : provider.limited
-            ? 'Limited'
+            ? "Limited"
             : ready
-              ? 'Ready'
+              ? "Ready"
               : provider.configured
-                ? 'Needs attention'
-                : 'Not configured';
+                ? "Needs attention"
+                : "Not configured";
   const statusColor =
     loading || loadError || provider.limited || (provider.configured && !ready)
-      ? 'var(--pend)'
+      ? "var(--pend)"
       : ready
-        ? 'var(--ok)'
-        : 'var(--text-3)';
+        ? "var(--ok)"
+        : "var(--text-3)";
   return (
     <section className="account-provider-card" data-provider={provider.id}>
       <div className="account-provider-header">
         <div style={{ minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
             <ProviderMark provider={provider.id} />
-            <h2 style={{ fontSize: 18, margin: 0 }}>{PROVIDER_LABELS[provider.id] || provider.label}</h2>
+            <h2 style={{ fontSize: 18, margin: 0 }}>
+              {PROVIDER_LABELS[provider.id] || provider.label}
+            </h2>
           </div>
-          <div style={{ color: 'var(--text-2)', fontSize: 12.5, lineHeight: 1.45, marginTop: 9 }}>
+          <div
+            style={{
+              color: "var(--text-2)",
+              fontSize: 12.5,
+              lineHeight: 1.45,
+              marginTop: 9,
+            }}
+          >
             {provider.description}
           </div>
         </div>
         <span className="account-status-badge" style={{ color: statusColor }}>
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "currentColor",
+            }}
+          />
           {status}
         </span>
       </div>
@@ -352,7 +452,9 @@ export function ProviderCard({
       <div className="account-provider-meta">
         <span>{provider.active || 0} active</span>
         <span>{provider.total || 0} total</span>
-        {provider.source && <span>{SOURCE_LABELS[provider.source] || provider.source}</span>}
+        {provider.source && (
+          <span>{SOURCE_LABELS[provider.source] || provider.source}</span>
+        )}
       </div>
 
       <div className="account-list">
@@ -362,10 +464,15 @@ export function ProviderCard({
           </div>
         ) : loadError ? (
           <div className="account-empty">
-            <div style={{ fontWeight: 500 }}>Could not load {provider.label} accounts</div>
-            <div style={{ color: 'var(--text-2)', fontSize: 12, marginTop: 4 }}>{loadError}</div>
+            <div style={{ fontWeight: 500 }}>
+              Could not load {provider.label} accounts
+            </div>
+            <div style={{ color: "var(--text-2)", fontSize: 12, marginTop: 4 }}>
+              {loadError}
+            </div>
           </div>
-        ) : (provider.configured || signInRequired) && provider.accounts.length ? (
+        ) : (provider.configured || signInRequired) &&
+          provider.accounts.length ? (
           accountPages.pageItems.map((account, index) => (
             <AccountDetail
               key={`${account.path || account.label}-${accountPages.startIndex + index}`}
@@ -388,10 +495,10 @@ export function ProviderCard({
                 ? `No ${provider.label} account data found`
                 : `No ${provider.label} account configured`}
             </div>
-            <div style={{ color: 'var(--text-2)', fontSize: 12, marginTop: 4 }}>
+            <div style={{ color: "var(--text-2)", fontSize: 12, marginTop: 4 }}>
               {provider.configured
                 ? `Refresh or reconnect ${provider.label} to load its accounts.`
-                : provider.management === 'login'
+                : provider.management === "login"
                   ? `Sign in to ${provider.label} to make this provider available.`
                   : `Add ${provider.credentialLabel.toLowerCase()} to make this provider available.`}
             </div>
@@ -399,15 +506,20 @@ export function ProviderCard({
         )}
       </div>
       <Pagination {...accountPages} itemLabel="accounts" compact />
-      {provider.id === 'deepseek' && provider.configured && (
-        <DeepSeekApiCheck key={`${provider.configured}:${credentialRevision}`} configured={provider.configured} />
+      {provider.id === "deepseek" && provider.configured && (
+        <DeepSeekApiCheck
+          key={`${provider.configured}:${credentialRevision}`}
+          configured={provider.configured}
+        />
       )}
 
       <div className="account-provider-actions">
         <Button onClick={onEdit}>{providerActionLabel(provider)}</Button>
         {onEditKey && (
           <Button variant="ghost" onClick={onEditKey}>
-            {provider.source === 'managed_api_key' || provider.canRemove ? 'Add or replace key' : 'Add API key'}
+            {provider.source === "managed_api_key" || provider.canRemove
+              ? "Add or replace key"
+              : "Add API key"}
           </Button>
         )}
         {provider.canRemove && (
@@ -416,7 +528,12 @@ export function ProviderCard({
           </Button>
         )}
         {PROVIDER_LINKS[provider.id] && (
-          <a className="account-provider-link" href={PROVIDER_LINKS[provider.id]} target="_blank" rel="noreferrer">
+          <a
+            className="account-provider-link"
+            href={PROVIDER_LINKS[provider.id]}
+            target="_blank"
+            rel="noreferrer"
+          >
             Get a key ↗
           </a>
         )}
@@ -426,21 +543,25 @@ export function ProviderCard({
 }
 
 export function providerActionLabel(provider) {
-  if (provider.management !== 'login') {
-    if (provider.configured) return 'Add or replace key';
-    const credential = `${provider.credentialLabel || ''}`.trim();
+  if (provider.management !== "login") {
+    if (provider.configured) return "Add or replace key";
+    const credential = `${provider.credentialLabel || ""}`.trim();
     if (credential) {
-      const name = credential.replace(/\s+api\s+key$/i, '').trim();
+      const name = credential.replace(/\s+api\s+key$/i, "").trim();
       if (name) return `Add ${name} key`;
     }
-    const label = `${provider.label || ''}`.trim();
-    return label ? `Add ${label} key` : 'Add API key';
+    const label = `${provider.label || ""}`.trim();
+    return label ? `Add ${label} key` : "Add API key";
   }
-  const signInRequired = (provider.accounts || []).some((account) => account.statusKind === 'expired');
-  if (provider.id === 'codex') return signInRequired ? 'Sign in to Codex again' : 'Add Codex account';
-  if (provider.id === 'xai') return signInRequired ? 'Sign in to xAI again' : 'Add Grok account';
-  if (signInRequired) return 'Sign in to Claude again';
-  return 'Add Claude account';
+  const signInRequired = (provider.accounts || []).some(
+    (account) => account.statusKind === "expired",
+  );
+  if (provider.id === "codex")
+    return signInRequired ? "Sign in to Codex again" : "Add Codex account";
+  if (provider.id === "xai")
+    return signInRequired ? "Sign in to xAI again" : "Add Grok account";
+  if (signInRequired) return "Sign in to Claude again";
+  return "Add Claude account";
 }
 
 export function updatePendingAccounts(current, accountId, pending) {
@@ -452,15 +573,25 @@ export function updatePendingAccounts(current, accountId, pending) {
 
 export function providerReloginAccountId(provider) {
   if (!LOGIN_PROVIDERS.has(provider.id)) return null;
-  return provider.accounts.find((account) => account.statusKind === 'expired')?.id || null;
+  return (
+    provider.accounts.find((account) => account.statusKind === "expired")?.id ||
+    null
+  );
 }
 
 function recalculateOverview(overview, providers) {
   return {
     ...overview,
-    configuredProviders: providers.filter((provider) => provider.configured).length,
-    active: providers.reduce((total, provider) => total + (provider.active || 0), 0),
-    total: providers.reduce((total, provider) => total + (provider.total || 0), 0),
+    configuredProviders: providers.filter((provider) => provider.configured)
+      .length,
+    active: providers.reduce(
+      (total, provider) => total + (provider.active || 0),
+      0,
+    ),
+    total: providers.reduce(
+      (total, provider) => total + (provider.total || 0),
+      0,
+    ),
     providers,
   };
 }
@@ -469,7 +600,9 @@ export function replaceAccountProvider(overview, provider) {
   if (!overview || !provider) return overview;
   return recalculateOverview(
     overview,
-    overview.providers.map((current) => (current.id === provider.id ? provider : current))
+    overview.providers.map((current) =>
+      current.id === provider.id ? provider : current,
+    ),
   );
 }
 
@@ -477,15 +610,19 @@ export function removeAccountFromOverview(overview, providerId, accountId) {
   if (!overview) return overview;
   const providers = overview.providers.map((provider) => {
     if (provider.id !== providerId) return provider;
-    const accounts = provider.accounts.filter((account) => account.id !== accountId);
+    const accounts = provider.accounts.filter(
+      (account) => account.id !== accountId,
+    );
     const active = accounts.filter((account) => account.active).length;
     return {
       ...provider,
       configured: accounts.length > 0,
       active,
       total: accounts.length,
-      limited: accounts.filter((account) => account.statusKind === 'limited').length,
-      stale: accounts.filter((account) => account.statusKind === 'stale').length,
+      limited: accounts.filter((account) => account.statusKind === "limited")
+        .length,
+      stale: accounts.filter((account) => account.statusKind === "stale")
+        .length,
       accounts,
     };
   });
@@ -506,14 +643,29 @@ export function removeProviderFromOverview(overview, providerId) {
           total: 0,
           accounts: [],
         }
-      : provider
+      : provider,
   );
   return recalculateOverview(overview, providers);
 }
 
 function ProviderMark({ provider }) {
-  const label = { codex: 'CX', claude: 'CL', xai: 'XA', openrouter: 'OR', deepseek: 'DS' }[provider] || provider;
-  return <span className={`mono account-provider-mark account-provider-mark-${provider}`}>{label}</span>;
+  const label =
+    {
+      codex: "CX",
+      claude: "CL",
+      xai: "XA",
+      openrouter: "OR",
+      deepseek: "DS",
+      ollama: "OL",
+      jev: "JV",
+    }[provider] || provider;
+  return (
+    <span
+      className={`mono account-provider-mark account-provider-mark-${provider}`}
+    >
+      {label}
+    </span>
+  );
 }
 
 function AccountDetail({
@@ -528,31 +680,55 @@ function AccountDetail({
   onToggleActive,
   updatingActive,
 }) {
-  const weeklyUsage = providerId === 'codex' ? codexWeeklyUsage(account) : null;
-  const signInRequired = LOGIN_PROVIDERS.has(providerId) && account.statusKind === 'expired';
+  const weeklyUsage = providerId === "codex" ? codexWeeklyUsage(account) : null;
+  const signInRequired =
+    LOGIN_PROVIDERS.has(providerId) && account.statusKind === "expired";
   const available = account.available ?? account.active;
-  const showRateLimits = providerId !== 'claude' || available;
+  const showRateLimits = providerId !== "claude" || available;
 
   return (
     <div className="account-detail">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: 12,
+        }}
+      >
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 550, overflowWrap: 'anywhere' }}>{account.email || account.label}</div>
+          <div style={{ fontWeight: 550, overflowWrap: "anywhere" }}>
+            {account.email || account.label}
+          </div>
           {account.path && (
             <div
               className="mono"
-              style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 3, overflowWrap: 'anywhere' }}
+              style={{
+                fontSize: 10.5,
+                color: "var(--text-3)",
+                marginTop: 3,
+                overflowWrap: "anywhere",
+              }}
             >
               {account.path}
             </div>
           )}
         </div>
-        <span className={`account-kind account-kind-${account.statusKind}`}>{account.status}</span>
+        <span className={`account-kind account-kind-${account.statusKind}`}>
+          {account.status}
+        </span>
       </div>
 
       {account.activityId && (
         <div style={{ marginTop: 12 }}>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: updatingActive ? 'wait' : 'pointer' }}>
+          <label
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              cursor: updatingActive ? "wait" : "pointer",
+            }}
+          >
             <input
               type="checkbox"
               role="switch"
@@ -563,23 +739,30 @@ function AccountDetail({
             />
             Active
           </label>
-          <div style={{ color: 'var(--text-2)', fontSize: 11.5, marginTop: 4 }}>
+          <div style={{ color: "var(--text-2)", fontSize: 11.5, marginTop: 4 }}>
             {account.active
-              ? 'Can receive new assignments.'
-              : 'Inactive. Activate this account to use it for new assignments.'}{' '}
+              ? "Can receive new assignments."
+              : "Inactive. Activate this account to use it for new assignments."}{" "}
             Calls already assigned may finish.
           </div>
         </div>
       )}
 
       {account.plan && (
-        <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 10 }}>
+        <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 10 }}>
           Plan: {account.plan}
-          {isFuture(account.subscriptionUntil) ? ` · ${formatUntil(account.subscriptionUntil, 'expires')}` : ''}
+          {isFuture(account.subscriptionUntil)
+            ? ` · ${formatUntil(account.subscriptionUntil, "expires")}`
+            : ""}
         </div>
       )}
 
-      {signInRequired && <ProviderSignInRequired providerId={providerId} message={account.authError} />}
+      {signInRequired && (
+        <ProviderSignInRequired
+          providerId={providerId}
+          message={account.authError}
+        />
+      )}
 
       {account.credit && <CreditUsage credit={account.credit} />}
 
@@ -599,8 +782,12 @@ function AccountDetail({
             <div key={`${detail.label}-${detail.value}`}>
               <div className="mono account-kicker">{detail.label}</div>
               <div
-                className={detail.mono ? 'mono' : undefined}
-                style={{ fontSize: 11.5, marginTop: 3, overflowWrap: 'anywhere' }}
+                className={detail.mono ? "mono" : undefined}
+                style={{
+                  fontSize: 11.5,
+                  marginTop: 3,
+                  overflowWrap: "anywhere",
+                }}
               >
                 {detail.value}
               </div>
@@ -610,13 +797,22 @@ function AccountDetail({
       )}
 
       {showRateLimits && (
-        <AccountRateLimits providerId={providerId} rateLimits={account.rateLimits} authenticated={available} />
+        <AccountRateLimits
+          providerId={providerId}
+          rateLimits={account.rateLimits}
+          authenticated={available}
+        />
       )}
 
       {account.canRemove && (
         <div className="account-detail-actions">
-          <Button variant="ghost" onClick={onRemove} disabled={removing} aria-label={`Remove ${account.label} account`}>
-            {removing ? 'Removing…' : 'Remove account'}
+          <Button
+            variant="ghost"
+            onClick={onRemove}
+            disabled={removing}
+            aria-label={`Remove ${account.label} account`}
+          >
+            {removing ? "Removing…" : "Remove account"}
           </Button>
         </div>
       )}
@@ -629,7 +825,8 @@ export function CodexSignInRequired() {
 }
 
 export function ProviderSignInRequired({ providerId, message }) {
-  const provider = providerId === 'claude' ? 'Claude' : providerId === 'xai' ? 'xAI' : 'Codex';
+  const provider =
+    providerId === "claude" ? "Claude" : providerId === "xai" ? "xAI" : "Codex";
   return (
     <div className="account-auth-required" role="alert">
       <span className="account-auth-required-mark" aria-hidden="true">
@@ -638,21 +835,30 @@ export function ProviderSignInRequired({ providerId, message }) {
       <div>
         <strong>Sign in to {provider} again</strong>
         <div>
-          {message || `The saved token was rejected. Quota usage is hidden until this account is authenticated again.`}
+          {message ||
+            `The saved token was rejected. Quota usage is hidden until this account is authenticated again.`}
         </div>
       </div>
     </div>
   );
 }
 
-export function CodexWeeklyUsage({ usage, onStart, onReset, starting, resetting }) {
+export function CodexWeeklyUsage({
+  usage,
+  onStart,
+  onReset,
+  starting,
+  resetting,
+}) {
   const busy = starting || resetting;
-  const hasManualReset = usage.manualResetsAvailable !== null && usage.manualResetsAvailable > 0;
-  const resetEligible = usage.manualResetsApplicable === null || usage.manualResetsApplicable > 0;
+  const hasManualReset =
+    usage.manualResetsAvailable !== null && usage.manualResetsAvailable > 0;
+  const resetEligible =
+    usage.manualResetsApplicable === null || usage.manualResetsApplicable > 0;
   const manualResetCredits = usage.manualResetCredits || [];
   return (
     <div
-      className={`account-weekly-usage${usage.notStarted ? ' account-weekly-usage-warning' : ''}`}
+      className={`account-weekly-usage${usage.notStarted ? " account-weekly-usage-warning" : ""}`}
       aria-busy={busy || undefined}
     >
       {usage.notStarted && (
@@ -661,14 +867,15 @@ export function CodexWeeklyUsage({ usage, onStart, onReset, starting, resetting 
             !
           </span>
           <span>
-            <strong>Weekly usage hasn’t started.</strong> Use this account now so its allowance doesn’t go unused.
+            <strong>Weekly usage hasn’t started.</strong> Use this account now
+            so its allowance doesn’t go unused.
           </span>
         </div>
       )}
       <div className="account-weekly-meta">
         <div className="account-weekly-stat">
           <span className="mono account-kicker">Weekly reset</span>
-          <span>{usage.resetRemaining || 'Time unavailable'}</span>
+          <span>{usage.resetRemaining || "Time unavailable"}</span>
         </div>
         {usage.manualResetsAvailable !== null && (
           <div className="account-weekly-stat account-manual-reset-stat">
@@ -676,8 +883,12 @@ export function CodexWeeklyUsage({ usage, onStart, onReset, starting, resetting 
             <span className="account-manual-reset-details">
               <span>{usage.manualResetsAvailable} available</span>
               {manualResetCredits.map((credit, index) => (
-                <span className="account-manual-reset-expiry" key={`${credit.expiresAt}-${index}`}>
-                  {credit.title} · Expires {formatResetExpiryDate(credit.expiresAt)}
+                <span
+                  className="account-manual-reset-expiry"
+                  key={`${credit.expiresAt}-${index}`}
+                >
+                  {credit.title} · Expires{" "}
+                  {formatResetExpiryDate(credit.expiresAt)}
                 </span>
               ))}
             </span>
@@ -687,8 +898,13 @@ export function CodexWeeklyUsage({ usage, onStart, onReset, starting, resetting 
       {(usage.notStarted || hasManualReset) && (
         <div className="account-weekly-actions">
           {usage.notStarted && (
-            <Button variant="ghost" onClick={onStart} disabled={busy} className="account-weekly-button">
-              {starting ? 'Waiting…' : 'Start quota'}
+            <Button
+              variant="ghost"
+              onClick={onStart}
+              disabled={busy}
+              className="account-weekly-button"
+            >
+              {starting ? "Waiting…" : "Start quota"}
             </Button>
           )}
           {hasManualReset && (
@@ -697,9 +913,13 @@ export function CodexWeeklyUsage({ usage, onStart, onReset, starting, resetting 
               onClick={onReset}
               disabled={busy || !resetEligible}
               className="account-weekly-button"
-              title={resetEligible ? 'Use one manual reset' : 'No current usage window is eligible for a reset'}
+              title={
+                resetEligible
+                  ? "Use one manual reset"
+                  : "No current usage window is eligible for a reset"
+              }
             >
-              {resetting ? 'Using reset…' : 'Use reset'}
+              {resetting ? "Using reset…" : "Use reset"}
             </Button>
           )}
         </div>
@@ -708,8 +928,8 @@ export function CodexWeeklyUsage({ usage, onStart, onReset, starting, resetting 
         <div className="account-weekly-processing" role="status">
           <span className="account-weekly-spinner" aria-hidden="true" />
           {resetting
-            ? 'Using a manual reset, then refreshing quota…'
-            : 'Waiting for Codex, then refreshing quota. This can take a while.'}
+            ? "Using a manual reset, then refreshing quota…"
+            : "Waiting for Codex, then refreshing quota. This can take a while."}
         </div>
       )}
     </div>
@@ -717,8 +937,11 @@ export function CodexWeeklyUsage({ usage, onStart, onReset, starting, resetting 
 }
 
 export function codexWeeklyUsage(account, now = Date.now()) {
-  const weeklyLimit = [account?.rateLimits?.primary, account?.rateLimits?.secondary].find(
-    (limit) => finiteNumber(limit?.windowMinutes) === WEEKLY_WINDOW_MINUTES
+  const weeklyLimit = [
+    account?.rateLimits?.primary,
+    account?.rateLimits?.secondary,
+  ].find(
+    (limit) => finiteNumber(limit?.windowMinutes) === WEEKLY_WINDOW_MINUTES,
   );
   if (!weeklyLimit) return null;
 
@@ -732,14 +955,22 @@ export function codexWeeklyUsage(account, now = Date.now()) {
   const resetIsFullWindowAway =
     Number.isFinite(observedAt) &&
     Number.isFinite(resetsAt) &&
-    Math.abs(resetsAt - observedAt - weeklyWindowMs) <= RESET_ALIGNMENT_TOLERANCE_MS;
-  const manualResetCredits = Array.isArray(account?.rateLimits?.manualResetCredits?.credits)
+    Math.abs(resetsAt - observedAt - weeklyWindowMs) <=
+      RESET_ALIGNMENT_TOLERANCE_MS;
+  const manualResetCredits = Array.isArray(
+    account?.rateLimits?.manualResetCredits?.credits,
+  )
     ? account.rateLimits.manualResetCredits.credits
         .map((credit) => ({
-          title: typeof credit?.title === 'string' && credit.title.trim() ? credit.title.trim() : 'Usage reset',
+          title:
+            typeof credit?.title === "string" && credit.title.trim()
+              ? credit.title.trim()
+              : "Usage reset",
           expiresAt: credit?.expiresAt,
         }))
-        .filter((credit) => Number.isFinite(new Date(credit.expiresAt).getTime()))
+        .filter((credit) =>
+          Number.isFinite(new Date(credit.expiresAt).getTime()),
+        )
     : [];
   return {
     notStarted: Boolean(
@@ -747,22 +978,31 @@ export function codexWeeklyUsage(account, now = Date.now()) {
       (account.available ?? account.active) &&
       usedPercent !== null &&
       usedPercent <= 0 &&
-      resetIsFullWindowAway
+      resetIsFullWindowAway,
     ),
     resetRemaining: formatResetRemaining(weeklyLimit.resetsAt, now),
-    manualResetsAvailable: finiteNumber(account?.rateLimits?.manualResetCredits?.availableCount),
-    manualResetsApplicable: finiteNumber(account?.rateLimits?.manualResetCredits?.applicableAvailableCount),
+    manualResetsAvailable: finiteNumber(
+      account?.rateLimits?.manualResetCredits?.availableCount,
+    ),
+    manualResetsApplicable: finiteNumber(
+      account?.rateLimits?.manualResetCredits?.applicableAvailableCount,
+    ),
     ...(manualResetCredits.length ? { manualResetCredits } : {}),
   };
 }
 
-export async function startCodexWeeklyUsageUntilStarted(accountId, startUsage, update, maxAttempts = 3) {
+export async function startCodexWeeklyUsageUntilStarted(
+  accountId,
+  startUsage,
+  update,
+  maxAttempts = 3,
+) {
   let overview = null;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     overview = await startUsage(accountId);
     update(overview);
     const account = overview?.providers
-      ?.find((provider) => provider.id === 'codex')
+      ?.find((provider) => provider.id === "codex")
       ?.accounts?.find((candidate) => candidate.id === accountId);
     if (!codexWeeklyUsage(account)?.notStarted) break;
   }
@@ -771,10 +1011,10 @@ export async function startCodexWeeklyUsageUntilStarted(accountId, startUsage, u
 
 export function formatResetRemaining(value, now = Date.now()) {
   const timestamp = new Date(value).getTime();
-  if (!Number.isFinite(timestamp)) return '';
+  if (!Number.isFinite(timestamp)) return "";
 
   let seconds = Math.ceil((timestamp - now) / 1000);
-  if (seconds <= 0) return 'Reset due';
+  if (seconds <= 0) return "Reset due";
   const days = Math.floor(seconds / 86400);
   seconds %= 86400;
   const hours = Math.floor(seconds / 3600);
@@ -782,23 +1022,26 @@ export function formatResetRemaining(value, now = Date.now()) {
   if (days) return `${days}d ${hours}h remaining`;
   if (hours) return `${hours}h ${minutes}m remaining`;
   if (minutes) return `${minutes}m remaining`;
-  return '<1m remaining';
+  return "<1m remaining";
 }
 
 export function formatResetExpiryDate(value, locale) {
   const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return 'date unavailable';
+  if (!Number.isFinite(date.getTime())) return "date unavailable";
   return new Intl.DateTimeFormat(locale, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
+    month: "short",
+    day: "numeric",
+    year: "numeric",
   }).format(date);
 }
 
 function CreditUsage({ credit }) {
   const usage = finiteNumber(credit.usage);
   const limit = finiteNumber(credit.limit);
-  const percentage = Math.max(0, Math.min(100, finiteNumber(credit.usedPercent) || 0));
+  const percentage = Math.max(
+    0,
+    Math.min(100, finiteNumber(credit.usedPercent) || 0),
+  );
   const hasLimit = limit !== null;
 
   return (
@@ -806,15 +1049,24 @@ function CreditUsage({ credit }) {
       <div className="account-credit-heading">
         <div>
           <div className="mono account-kicker">Credit usage</div>
-          <div className="account-credit-value">{usage === null ? '—' : `${formatUsd(usage)} used`}</div>
+          <div className="account-credit-value">
+            {usage === null ? "—" : `${formatUsd(usage)} used`}
+          </div>
         </div>
         <div className="account-credit-percent">
-          {hasLimit ? `${Math.round(percentage)}% of ${formatUsd(limit)}` : 'No key limit'}
+          {hasLimit
+            ? `${Math.round(percentage)}% of ${formatUsd(limit)}`
+            : "No key limit"}
         </div>
       </div>
       {hasLimit && (
         <div className="account-limit-track">
-          <div style={{ width: `${percentage}%`, background: percentage >= 90 ? 'var(--fail)' : 'var(--accent)' }} />
+          <div
+            style={{
+              width: `${percentage}%`,
+              background: percentage >= 90 ? "var(--fail)" : "var(--accent)",
+            }}
+          />
         </div>
       )}
       <div className="account-credit-note">{creditUsageNote(credit)}</div>
@@ -824,33 +1076,51 @@ function CreditUsage({ credit }) {
 
 export function creditUsageNote(credit) {
   const limit = finiteNumber(credit?.limit);
-  if (limit === null) return 'No per-key spending limit; remaining account credits are unavailable.';
+  if (limit === null)
+    return "No per-key spending limit; remaining account credits are unavailable.";
   const remaining = finiteNumber(credit?.remaining);
-  const remainingLabel = remaining === null ? 'Remaining amount unavailable' : `${formatUsd(remaining)} remaining`;
-  const reset = credit?.limitReset ? `${credit.limitReset} reset` : 'Does not reset';
+  const remainingLabel =
+    remaining === null
+      ? "Remaining amount unavailable"
+      : `${formatUsd(remaining)} remaining`;
+  const reset = credit?.limitReset
+    ? `${credit.limitReset} reset`
+    : "Does not reset";
   return `${remainingLabel} · ${reset}`;
 }
 
-export function AccountRateLimits({ providerId, rateLimits, authenticated = true }) {
-  const showClaudeUsage = providerId === 'claude';
+export function AccountRateLimits({
+  providerId,
+  rateLimits,
+  authenticated = true,
+}) {
+  const showClaudeUsage = providerId === "claude";
   if (showClaudeUsage && !authenticated) return null;
   const primary = rateLimits?.primary;
   const secondary = rateLimits?.secondary;
   if (!showClaudeUsage && !primary && !secondary) return null;
 
-  const unavailableNote = showClaudeUsage ? 'Usage unavailable · refresh or reconnect Claude' : undefined;
+  const unavailableNote = showClaudeUsage
+    ? "Usage unavailable · refresh or reconnect Claude"
+    : undefined;
   return (
     <div className="account-limit-grid">
       {(primary || showClaudeUsage) && (
         <RateLimit
-          label={rateLimitLabel(primary, showClaudeUsage ? '5-hour window' : 'Primary window')}
+          label={rateLimitLabel(
+            primary,
+            showClaudeUsage ? "5-hour window" : "Primary window",
+          )}
           limit={primary}
           unavailableNote={unavailableNote}
         />
       )}
       {(secondary || showClaudeUsage) && (
         <RateLimit
-          label={rateLimitLabel(secondary, showClaudeUsage ? 'Weekly window' : 'Secondary window')}
+          label={rateLimitLabel(
+            secondary,
+            showClaudeUsage ? "Weekly window" : "Secondary window",
+          )}
           limit={secondary}
           unavailableNote={unavailableNote}
         />
@@ -859,13 +1129,19 @@ export function AccountRateLimits({ providerId, rateLimits, authenticated = true
   );
 }
 
-function RateLimit({ label, limit, unavailableNote = 'No recent limit data' }) {
+function RateLimit({ label, limit, unavailableNote = "No recent limit data" }) {
   const used = Math.max(0, Math.min(100, Number(limit?.usedPercent) || 0));
-  const note = limit?.resetsAt ? formatUntil(limit.resetsAt, 'resets') : limit ? null : unavailableNote;
+  const note = limit?.resetsAt
+    ? formatUntil(limit.resetsAt, "resets")
+    : limit
+      ? null
+      : unavailableNote;
   return (
     <div>
       <div className="mono account-kicker">{label}</div>
-      <div style={{ fontWeight: 600, fontSize: 17, marginTop: 5 }}>{limit ? `${Math.round(used)}%` : '—'}</div>
+      <div style={{ fontWeight: 600, fontSize: 17, marginTop: 5 }}>
+        {limit ? `${Math.round(used)}%` : "—"}
+      </div>
       <div
         className="account-limit-track"
         role="progressbar"
@@ -873,11 +1149,22 @@ function RateLimit({ label, limit, unavailableNote = 'No recent limit data' }) {
         aria-valuemin="0"
         aria-valuemax="100"
         aria-valuenow={limit ? Math.round(used) : undefined}
-        aria-valuetext={limit ? `${Math.round(used)}% used` : 'Usage unavailable'}
+        aria-valuetext={
+          limit ? `${Math.round(used)}% used` : "Usage unavailable"
+        }
       >
-        <div style={{ width: `${used}%`, background: used >= 90 ? 'var(--fail)' : 'var(--accent)' }} />
+        <div
+          style={{
+            width: `${used}%`,
+            background: used >= 90 ? "var(--fail)" : "var(--accent)",
+          }}
+        />
       </div>
-      {note && <div style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 5 }}>{note}</div>}
+      {note && (
+        <div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 5 }}>
+          {note}
+        </div>
+      )}
     </div>
   );
 }
@@ -885,8 +1172,8 @@ function RateLimit({ label, limit, unavailableNote = 'No recent limit data' }) {
 export function rateLimitLabel(limit, fallback) {
   const minutes = finiteNumber(limit?.windowMinutes);
   if (minutes === null || minutes <= 0) return fallback;
-  if (minutes === WEEKLY_WINDOW_MINUTES) return 'Weekly window';
-  if (minutes === 24 * 60) return 'Daily window';
+  if (minutes === WEEKLY_WINDOW_MINUTES) return "Weekly window";
+  if (minutes === 24 * 60) return "Daily window";
   if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)}-day window`;
   if (minutes % 60 === 0) return `${minutes / 60}-hour window`;
   return `${minutes}-minute window`;
@@ -896,11 +1183,11 @@ function LoginDialog({ provider, onClose, onComplete }) {
   const completionReported = useRef(false);
   const [session, setSession] = useState(null);
   const [starting, setStarting] = useState(false);
-  const [callbackCode, setCallbackCode] = useState('');
+  const [callbackCode, setCallbackCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
-  const active = session && ['starting', 'waiting'].includes(session.status);
+  const active = session && ["starting", "waiting"].includes(session.status);
   const reloginAccountId = providerReloginAccountId(provider);
   const relogin = Boolean(reloginAccountId);
 
@@ -912,7 +1199,8 @@ function LoginDialog({ provider, onClose, onComplete }) {
         const next = await api.providerLogin(session.id);
         if (!stopped) setSession(next);
       } catch (nextError) {
-        if (!stopped) setError(nextError.message || 'Could not read the login status.');
+        if (!stopped)
+          setError(nextError.message || "Could not read the login status.");
       }
     };
     const interval = window.setInterval(poll, 1000);
@@ -923,16 +1211,16 @@ function LoginDialog({ provider, onClose, onComplete }) {
   }, [active, session?.id]);
 
   useEffect(() => {
-    if (session?.status !== 'completed' || completionReported.current) return;
+    if (session?.status !== "completed" || completionReported.current) return;
     completionReported.current = true;
     onComplete();
   }, [session?.status, onComplete]);
 
   useEffect(() => {
     if (active) return undefined;
-    const onKey = (event) => event.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    const onKey = (event) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [active, onClose]);
 
   const start = async () => {
@@ -950,16 +1238,16 @@ function LoginDialog({ provider, onClose, onComplete }) {
   const submitCode = async (event) => {
     event.preventDefault();
     if (!callbackCode.trim()) {
-      setError('Paste the callback code from Claude.');
+      setError("Paste the callback code from Claude.");
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
       setSession(await api.submitProviderLoginCode(session.id, callbackCode));
-      setCallbackCode('');
+      setCallbackCode("");
     } catch (nextError) {
-      setError(nextError.message || 'Could not submit the callback code.');
+      setError(nextError.message || "Could not submit the callback code.");
     } finally {
       setSubmitting(false);
     }
@@ -977,7 +1265,11 @@ function LoginDialog({ provider, onClose, onComplete }) {
   };
 
   return (
-    <div className="account-dialog-backdrop" role="presentation" onMouseDown={() => !active && onClose()}>
+    <div
+      className="account-dialog-backdrop"
+      role="presentation"
+      onMouseDown={() => !active && onClose()}
+    >
       <div
         className="account-dialog account-login-dialog"
         role="dialog"
@@ -988,68 +1280,99 @@ function LoginDialog({ provider, onClose, onComplete }) {
         <div className="account-dialog-header">
           <div>
             <div className="mono account-kicker">{provider.label}</div>
-            <div id="account-login-title" style={{ fontSize: 20, fontWeight: 600, marginTop: 5 }}>
+            <div
+              id="account-login-title"
+              style={{ fontSize: 20, fontWeight: 600, marginTop: 5 }}
+            >
               {relogin
                 ? `Sign in to ${provider.label} again`
-                : provider.id === 'codex'
-                  ? 'Add Codex account'
-                  : provider.id === 'xai'
-                    ? 'Add Grok account'
-                    : 'Add Claude account'}
+                : provider.id === "codex"
+                  ? "Add Codex account"
+                  : provider.id === "xai"
+                    ? "Add Grok account"
+                    : "Add Claude account"}
             </div>
           </div>
-          <button className="account-dialog-close" type="button" aria-label="Close" onClick={cancel}>
+          <button
+            className="account-dialog-close"
+            type="button"
+            aria-label="Close"
+            onClick={cancel}
+          >
             ×
           </button>
         </div>
 
         {!session && (
           <div className="account-login-intro">
-            {provider.id === 'codex' ? (
+            {provider.id === "codex" ? (
               <>
-                Codex will create a one-time device code. Open the sign-in page, enter the code, and authenticate the
-                ChatGPT account you want open·kritt to use.
+                Codex will create a one-time device code. Open the sign-in page,
+                enter the code, and authenticate the ChatGPT account you want
+                open·kritt to use.
               </>
-            ) : provider.id === 'xai' ? (
+            ) : provider.id === "xai" ? (
               <>
-                Grok will create a one-time device code. Open the xAI sign-in page, enter the code, and authenticate the
-                account you want open·kritt to use for Grok Build.
+                Grok will create a one-time device code. Open the xAI sign-in
+                page, enter the code, and authenticate the account you want
+                open·kritt to use for Grok Build.
               </>
             ) : (
               <>
-                Claude will open its subscription sign-in page. After authentication, copy the callback code into this
-                dialog to {relogin ? 'replace the expired login on this account' : 'add this Claude account'}.
+                Claude will open its subscription sign-in page. After
+                authentication, copy the callback code into this dialog to{" "}
+                {relogin
+                  ? "replace the expired login on this account"
+                  : "add this Claude account"}
+                .
               </>
             )}
           </div>
         )}
 
         {session && (
-          <div className={`account-login-state account-login-state-${session.status}`}>
-            <div className="mono account-kicker">{loginStatusLabel(session.status)}</div>
-            <div style={{ marginTop: 6, lineHeight: 1.5 }}>{session.message}</div>
+          <div
+            className={`account-login-state account-login-state-${session.status}`}
+          >
+            <div className="mono account-kicker">
+              {loginStatusLabel(session.status)}
+            </div>
+            <div style={{ marginTop: 6, lineHeight: 1.5 }}>
+              {session.message}
+            </div>
           </div>
         )}
 
-        {session?.authorizationUrl && session.status !== 'completed' && (
-          <a className="account-login-link" href={session.authorizationUrl} target="_blank" rel="noreferrer">
+        {session?.authorizationUrl && session.status !== "completed" && (
+          <a
+            className="account-login-link"
+            href={session.authorizationUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
             Open {provider.label} sign-in page ↗
           </a>
         )}
 
-        {session?.deviceCode && session.status !== 'completed' && (
+        {session?.deviceCode && session.status !== "completed" && (
           <div className="account-device-code-wrap">
             <div className="mono account-kicker">One-time device code</div>
             <div className="mono account-device-code">{session.deviceCode}</div>
-            <Button variant="ghost" onClick={() => navigator.clipboard?.writeText(session.deviceCode)}>
+            <Button
+              variant="ghost"
+              onClick={() => navigator.clipboard?.writeText(session.deviceCode)}
+            >
               Copy code
             </Button>
           </div>
         )}
 
-        {session?.requiresInput && session.status === 'waiting' && (
+        {session?.requiresInput && session.status === "waiting" && (
           <form onSubmit={submitCode}>
-            <label htmlFor="claude-callback-code" style={{ display: 'block', fontWeight: 500, fontSize: 13 }}>
+            <label
+              htmlFor="claude-callback-code"
+              style={{ display: "block", fontWeight: 500, fontSize: 13 }}
+            >
               Claude callback code
             </label>
             <input
@@ -1062,8 +1385,12 @@ function LoginDialog({ provider, onClose, onComplete }) {
               placeholder="Paste code"
               className="account-credential-input mono"
             />
-            <Button type="submit" disabled={submitting} style={{ marginTop: 12 }}>
-              {submitting ? 'Verifying…' : 'Finish Claude login'}
+            <Button
+              type="submit"
+              disabled={submitting}
+              style={{ marginTop: 12 }}
+            >
+              {submitting ? "Verifying…" : "Finish Claude login"}
             </Button>
           </form>
         )}
@@ -1071,19 +1398,21 @@ function LoginDialog({ provider, onClose, onComplete }) {
         {error && <div className="account-dialog-error">{error}</div>}
 
         <div className="account-dialog-actions">
-          {session?.status === 'completed' ? (
+          {session?.status === "completed" ? (
             <Button onClick={onClose}>Done</Button>
           ) : (
             <>
               <Button variant="ghost" onClick={cancel}>
-                {active ? 'Cancel login' : 'Cancel'}
+                {active ? "Cancel login" : "Cancel"}
               </Button>
               {!session && (
                 <Button onClick={start} disabled={starting}>
-                  {starting ? 'Starting…' : 'Start login'}
+                  {starting ? "Starting…" : "Start login"}
                 </Button>
               )}
-              {session?.status === 'failed' && <Button onClick={start}>Try again</Button>}
+              {session?.status === "failed" && (
+                <Button onClick={start}>Try again</Button>
+              )}
             </>
           )}
         </div>
@@ -1093,45 +1422,53 @@ function LoginDialog({ provider, onClose, onComplete }) {
 }
 
 function loginStatusLabel(status) {
-  if (status === 'completed') return 'Login complete';
-  if (status === 'failed') return 'Login failed';
-  if (status === 'canceled') return 'Login canceled';
-  return 'Waiting for sign-in';
+  if (status === "completed") return "Login complete";
+  if (status === "failed") return "Login failed";
+  if (status === "canceled") return "Login canceled";
+  return "Waiting for sign-in";
 }
 
 function CredentialDialog({ provider, onClose, onSave }) {
   const inputRef = useRef(null);
-  const [credential, setCredential] = useState('');
+  const [credential, setCredential] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     inputRef.current?.focus();
-    const onKey = (event) => event.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    const onKey = (event) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
   const submit = async (event) => {
     event.preventDefault();
     if (!credential.trim()) {
-      setError('Enter an API key.');
+      setError("Enter an API key.");
       return;
     }
     setSaving(true);
     setError(null);
     try {
       await onSave(provider, credential);
-      setCredential('');
+      setCredential("");
     } catch (nextError) {
-      setError(nextError.errors?.[0]?.message || nextError.message || 'Could not save the credential.');
+      setError(
+        nextError.errors?.[0]?.message ||
+          nextError.message ||
+          "Could not save the credential.",
+      );
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="account-dialog-backdrop" role="presentation" onMouseDown={onClose}>
+    <div
+      className="account-dialog-backdrop"
+      role="presentation"
+      onMouseDown={onClose}
+    >
       <form
         className="account-dialog"
         role="dialog"
@@ -1143,16 +1480,32 @@ function CredentialDialog({ provider, onClose, onSave }) {
         <div className="account-dialog-header">
           <div>
             <div className="mono account-kicker">{provider.label}</div>
-            <div id="account-dialog-title" style={{ fontSize: 20, fontWeight: 600, marginTop: 5 }}>
-              {provider.configured ? 'Add or replace API key' : 'Add account'}
+            <div
+              id="account-dialog-title"
+              style={{ fontSize: 20, fontWeight: 600, marginTop: 5 }}
+            >
+              {provider.configured ? "Add or replace API key" : "Add account"}
             </div>
           </div>
-          <button className="account-dialog-close" type="button" aria-label="Close" onClick={onClose}>
+          <button
+            className="account-dialog-close"
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+          >
             ×
           </button>
         </div>
 
-        <label htmlFor="provider-credential" style={{ display: 'block', fontWeight: 500, fontSize: 13, marginTop: 22 }}>
+        <label
+          htmlFor="provider-credential"
+          style={{
+            display: "block",
+            fontWeight: 500,
+            fontSize: 13,
+            marginTop: 22,
+          }}
+        >
           {provider.credentialLabel}
         </label>
         <input
@@ -1166,8 +1519,16 @@ function CredentialDialog({ provider, onClose, onSave }) {
           placeholder="Paste key"
           className="account-credential-input mono"
         />
-        <div style={{ color: 'var(--text-2)', fontSize: 11.5, lineHeight: 1.5, marginTop: 8 }}>
-          Stored locally with restricted file permissions. The value is sent once and is never displayed again.
+        <div
+          style={{
+            color: "var(--text-2)",
+            fontSize: 11.5,
+            lineHeight: 1.5,
+            marginTop: 8,
+          }}
+        >
+          Stored locally with restricted file permissions. The value is sent
+          once and is never displayed again.
         </div>
         {error && <div className="account-dialog-error">{error}</div>}
 
@@ -1176,7 +1537,7 @@ function CredentialDialog({ provider, onClose, onSave }) {
             Cancel
           </Button>
           <Button type="submit" disabled={saving}>
-            {saving ? 'Saving…' : 'Save account'}
+            {saving ? "Saving…" : "Save account"}
           </Button>
         </div>
       </form>
@@ -1187,15 +1548,20 @@ function CredentialDialog({ provider, onClose, onSave }) {
 function formatDate(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
-    ? 'just now'
-    : date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    ? "just now"
+    : date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function formatUntil(value, verb) {
   const timestamp = new Date(value).getTime();
-  if (!Number.isFinite(timestamp)) return '';
+  if (!Number.isFinite(timestamp)) return "";
   let seconds = Math.round((timestamp - Date.now()) / 1000);
-  if (seconds <= 0) return verb === 'resets' ? 'reset time passed' : verb === 'expires' ? 'expired' : 'time passed';
+  if (seconds <= 0)
+    return verb === "resets"
+      ? "reset time passed"
+      : verb === "expires"
+        ? "expired"
+        : "time passed";
   const days = Math.floor(seconds / 86400);
   seconds %= 86400;
   const hours = Math.floor(seconds / 3600);
@@ -1211,17 +1577,17 @@ function isFuture(value) {
 }
 
 function finiteNumber(value) {
-  if (value === null || value === undefined || value === '') return null;
+  if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
 
 function formatUsd(value) {
   const amount = finiteNumber(value);
-  if (amount === null) return '—';
+  if (amount === null) return "—";
   return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: 'USD',
+    style: "currency",
+    currency: "USD",
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
@@ -1229,9 +1595,11 @@ function formatUsd(value) {
 
 export function applyAccountActivity(overview, providerId, saved) {
   const provider = overview?.providers.find((item) => item.id === providerId);
-  if (!provider || typeof saved?.active !== 'boolean') return overview;
+  if (!provider || typeof saved?.active !== "boolean") return overview;
   const accounts = provider.accounts.map((account) =>
-    account.activityId === saved.activityId ? { ...account, active: saved.active } : account
+    account.activityId === saved.activityId
+      ? { ...account, active: saved.active }
+      : account,
   );
   return replaceAccountProvider(overview, {
     ...provider,

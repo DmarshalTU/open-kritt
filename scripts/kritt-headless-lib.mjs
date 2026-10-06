@@ -23,6 +23,7 @@ const PROVIDER_HARNESSES = Object.freeze({
   openrouter: ['claude-code', 'codex'],
   xai: ['grok-build'],
   deepseek: ['codex'],
+  ollama: ['codex'],
 });
 const PROVIDER_EFFORTS = Object.freeze({
   codex: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
@@ -30,6 +31,7 @@ const PROVIDER_EFFORTS = Object.freeze({
   openrouter: ['default', 'low', 'medium', 'high', 'xhigh', 'max'],
   xai: ['low', 'medium', 'high', 'xhigh'],
   deepseek: ['low', 'high', 'max'],
+  ollama: ['low'],
 });
 const HARNESS_EFFORTS = Object.freeze({
   codex: ['default', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],

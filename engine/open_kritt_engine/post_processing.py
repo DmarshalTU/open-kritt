@@ -13,6 +13,7 @@ from .harnesses import (
     harness_failure_retry_count,
     normalize_harness_name,
 )
+from .jev import JEV_MODEL, jev_api_key, rank_findings
 from .model_output_artifacts import record_model_error_output
 from .models import post_processing_model_selection, supplemental_post_script_model_selection
 from .prompting import (
@@ -182,6 +183,30 @@ def dedupe_batch(
     anchors = [row for row in vulnerabilities if row.get("dedupe_is_canonical") is True]
     targets = [row for row in vulnerabilities if row.get("dedupe_is_canonical") is None]
     return anchors, targets[:batch_size]
+
+
+def _jev_finding_states(scan: dict[str, Any], targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    extra = scan.get("extra") if isinstance(scan.get("extra"), dict) else {}
+    states: list[dict[str, Any]] = []
+    for row in targets:
+        item = _vuln_item(row)
+        text = json.dumps(
+            {
+                "repository": scan.get("repo_full"),
+                "scope": scan.get("repo_scope"),
+                "program": extra.get("bug_bounty_url"),
+                "finding": item,
+            },
+            default=str,
+        )
+        states.append(
+            {
+                "id": _int(row["id"]),
+                "state": text[:12000],
+                "vulnerability_type": item.get("vulnerability_type"),
+            }
+        )
+    return states
 
 
 def ranker_batch(
@@ -952,6 +977,7 @@ class PostProcessor:
             batch_index = self.db.next_post_process_batch_index(conn, scan_id, "ranker")
             started = now_utc()
             selection = post_processing_model_selection(current)
+            api_key = jev_api_key()
             metadata_id = self.db.claim_post_process_metadata(
                 conn,
                 scan_id=scan_id,
@@ -959,12 +985,12 @@ class PostProcessor:
                 kind="ranker",
                 batch_index=batch_index,
                 target_vulnerability_ids=[_int(row["id"]) for row in targets],
-                prompt_template="anchored-ranker",
+                prompt_template="jev-decisions" if api_key else "anchored-ranker",
                 prompt_filled="",
-                model=selection.model,
+                model=JEV_MODEL if api_key else selection.model,
                 harness=selection.harness,
                 thinking_effort=selection.thinking_effort,
-                model_provider=selection.model_provider,
+                model_provider="jev" if api_key else selection.model_provider,
                 run_started_at=started,
             )
             conn.commit()
@@ -976,21 +1002,32 @@ class PostProcessor:
 
         started = now_utc()
         try:
-            payload, usage, codex_session_id, checked_out_commit = self._run_harness_with_retries(
-                metadata_id=metadata_id,
-                scan=current,
-                harness=harness,
-                prompt=prompt,
-                schema=ranker_schema(),
-                validator=validator,
-                kind="ranker",
-            )
+            if api_key:
+                payload, usage, ranked_model = rank_findings(
+                    _jev_finding_states(current, targets),
+                    api_key=api_key,
+                    rules=str(current.get("severity_ranker") or ""),
+                )
+                codex_session_id = None
+                checked_out_commit = None
+                prompt = "Jev severity, in-scope, and reportable decisions."
+            else:
+                ranked_model = selection.model
+                payload, usage, codex_session_id, checked_out_commit = self._run_harness_with_retries(
+                    metadata_id=metadata_id,
+                    scan=current,
+                    harness=harness,
+                    prompt=prompt,
+                    schema=ranker_schema(),
+                    validator=validator,
+                    kind="ranker",
+                )
             updates = rank_updates_from_payload(
                 payload,
                 anchors=anchors,
                 targets=targets,
                 rank_run_id=metadata_id,
-                model=selection.model,
+                model=ranked_model,
                 prompt_filled=prompt,
             )
             run_time_ms = int((now_utc() - started).total_seconds() * 1000)

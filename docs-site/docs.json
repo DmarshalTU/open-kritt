@@ -33,7 +33,9 @@
           "ai-provider-setup/claude-code",
           "ai-provider-setup/openrouter",
           "ai-provider-setup/xai",
-          "ai-provider-setup/deepseek"
+          "ai-provider-setup/deepseek",
+          "ai-provider-setup/ollama",
+          "ai-provider-setup/jev"
         ]
       },
       {

@@ -1,0 +1,28 @@
+---
+title: 'Jev'
+description: 'Score findings with TypeSafe Jev during severity ranking.'
+---
+
+Jev is a decision model. It answers a fixed set of questions about a finding and
+returns a choice or a probability. It does not read the repository, generate a
+workflow, or write a proof of concept, so it is not a scan provider.
+
+With `TYPESAFE_API_KEY` set, the severity-ranking stage sends each canonical
+finding to `POST https://api.typesafe.ai/v1/systemone`. One request asks:
+
+- which severity matches the finding, using the scan's ranker text
+- whether a remote untrusted attacker can reach it
+- whether it describes a concrete, reportable impact
+
+The finding list then uses that severity. The rank note includes the in-scope and
+reportable probabilities. Reward amounts stay unset. Without the key, ranking
+stays on the scan model.
+
+1. Create a key at [console.typesafe.ai/keys](https://console.typesafe.ai/keys).
+2. Add it in **Accounts** as Jev, or set `TYPESAFE_API_KEY` in `.env`.
+3. Recreate the engine container after changing `.env`. A key saved from Accounts
+   is read from the shared credential file on the next ranking pass.
+4. Run a scan with any scan provider, such as Local. Ranking uses Jev when the
+   key is present.
+
+The key stays on the engine. Scan containers do not receive it.

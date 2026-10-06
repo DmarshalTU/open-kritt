@@ -11,17 +11,20 @@ export const PROVIDER_KEYS = [
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
   'DEEPSEEK_API_KEY',
+  'OLLAMA_API_KEY',
   'OPENROUTER_API_KEY',
   'XAI_API_KEY',
 ];
 export const CODEX_LOGIN_STATUS_KEY = 'CODEX_LOGIN_CONFIGURED';
 export const MANAGED_PROVIDER_ENV_KEYS = {
   deepseek: 'DEEPSEEK_API_KEY',
+  ollama: 'OLLAMA_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
   xai: 'XAI_API_KEY',
 };
 export const MANAGED_PROVIDER_LABELS = {
   deepseek: 'DeepSeek API key',
+  ollama: 'Local server token',
   openrouter: 'OpenRouter API key',
   xai: 'xAI API key',
 };
@@ -65,6 +68,11 @@ export const ENVIRONMENT_ITEMS = [
     info: 'Used by the Codex harness with models available to the configured DeepSeek account.',
   },
   {
+    key: 'OLLAMA_API_KEY',
+    label: 'Local server token',
+    info: 'Not a secret. Set this to ollama when a local Ollama server should appear as the Local provider.',
+  },
+  {
     key: 'OPENROUTER_API_KEY',
     label: 'OpenRouter API key',
     info: 'Used for supported OpenRouter-compatible model and harness selections.',
@@ -73,6 +81,11 @@ export const ENVIRONMENT_ITEMS = [
     key: 'XAI_API_KEY',
     label: 'xAI API key',
     info: 'Used by the Grok Build harness via the xAI provider.',
+  },
+  {
+    key: 'TYPESAFE_API_KEY',
+    label: 'TypeSafe API key',
+    info: 'Used by Jev to score findings for severity, scope, and whether they look reportable. It does not run scans.',
   },
   {
     key: 'GITHUB_TOKEN',
@@ -1377,37 +1390,39 @@ export async function runSetup(options = {}) {
   while (true) {
     const status = await getSetupStatus(context);
     renderStatus(status, context.io);
-    write(context.io, '\n1) Codex login (recommended)');
-    write(context.io, '2) Claude login');
-    write(context.io, '3) Codex API key');
-    write(context.io, '4) OpenAI API key');
-    write(context.io, '5) Anthropic API key');
-    write(context.io, '6) DeepSeek API key');
-    write(context.io, '7) OpenRouter API key');
-    write(context.io, '8) xAI API key');
-    write(context.io, '9) GitHub token');
-    write(context.io, '10) Finish setup');
+    const entries = [
+      { label: 'Codex login (recommended)', kind: 'codex-login' },
+      { label: 'Claude login', kind: 'claude-login' },
+      ...providerEnvironmentItems().map((item) => ({ label: item.label, kind: 'env', item })),
+      {
+        label: 'GitHub token',
+        kind: 'env',
+        item: ENVIRONMENT_ITEMS.find((candidate) => candidate.key === 'GITHUB_TOKEN'),
+      },
+    ];
+    entries.forEach((entry, index) => {
+      entry.choice = String(index + 1);
+      write(context.io, `${entry.choice}) ${entry.label}`);
+    });
+    const finishChoice = String(entries.length + 1);
+    write(context.io, `${finishChoice}) Finish setup`);
     const choice = (await context.prompter.ask('Choose an item: ')).toLowerCase();
 
-    if (choice === '10' || choice === 'q' || choice === 'quit') break;
-    if (choice === '1') {
-      await manageCodexLogin(context);
-      continue;
-    }
-    if (choice === '2') {
-      await manageClaudeLogin(context);
-      continue;
-    }
-    const providerItems = providerEnvironmentItems();
-    const githubChoice = String(providerItems.length + 3);
-    const item =
-      providerItems[Number(choice) - 3] ||
-      (choice === githubChoice ? ENVIRONMENT_ITEMS.find((candidate) => candidate.key === 'GITHUB_TOKEN') : null);
-    if (!item) {
+    if (choice === finishChoice || choice === 'q' || choice === 'quit') break;
+    const selected = entries.find((entry) => entry.choice === choice);
+    if (!selected) {
       write(context.io, 'Choose a listed item.');
       continue;
     }
-    await manageEnvironmentItem(context, item);
+    if (selected.kind === 'codex-login') {
+      await manageCodexLogin(context);
+      continue;
+    }
+    if (selected.kind === 'claude-login') {
+      await manageClaudeLogin(context);
+      continue;
+    }
+    await manageEnvironmentItem(context, selected.item);
   }
 
   const status = await syncProviderLoginStatus(context);
